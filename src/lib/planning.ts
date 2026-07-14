@@ -1,0 +1,615 @@
+// 딥테크 정부지원사업 기술기획 · 사업계획서 자동 완성 엔진
+// 참고 방법론: 첨부 문서(딥테크 기술기획 Step 1~4 + 계획서 완성)의 흐름을 그대로 구현한다.
+//   Step 1: 사업 소개 + 문제점 → AI가 5개 딥테크 아이디어 도출
+//   Step 2: 아이디어 선택      → AI가 시스템 아키텍처(4계층 + 모듈별 상세) 설계
+//   Step 3: 선정이력/특허       → AI가 차별화 포인트(핵심 알고리즘·IP) 도출
+//   Step 4: 대표/팀 이력        → AI가 연구개발 기획 초안 조립
+//   Plan  : 위 전체            → 정부 R&D 사업계획서 양식으로 완성
+//
+// grader.ts 와 동일하게, ANTHROPIC_API_KEY 가 있으면 Claude(도구호출)로 생성하고
+// 없으면 입력 기반 데모 생성으로 완전히 동작한다(데모 모드).
+
+import Anthropic from "@anthropic-ai/sdk";
+import { env, features } from "./env";
+
+// ---------------------------------------------------------------------------
+// 데이터 모델
+// ---------------------------------------------------------------------------
+
+export interface PlanningInput {
+  // Step 1
+  businessIntro: string; // 사업 소개
+  problems: string[]; // 해결하고 싶은 문제(페인포인트)
+  // Step 2
+  selectedIdeaIds: number[]; // 선택한 아이디어 번호(1~5). 비어있으면 전체 통합
+  // Step 3
+  history: string; // 선정이력·특허·수상 등 (없으면 "없음")
+  // Step 4
+  founder: string; // 대표자 이력
+  team: string; // 팀원 구성/이력
+}
+
+export const EMPTY_INPUT: PlanningInput = {
+  businessIntro: "",
+  problems: [""],
+  selectedIdeaIds: [],
+  history: "",
+  founder: "",
+  team: "",
+};
+
+export interface DeepTechIdea {
+  id: number;
+  title: string; // 아이디어 제목(과제형)
+  summary: string; // 설명 + 해결하는 문제 매핑
+  aiTech: string; // 핵심 AI 기술 (ASR/NLP/RL/CV ...)
+  novelty: string; // R&D 과제로서의 신규성·난이도
+  solvedProblems: string[]; // 해결하는 문제 요약
+}
+
+export interface ArchModule {
+  id: string; // "모듈1" | "M1"
+  name: string; // 엔진/모듈명
+  role: string; // 역할/정의
+  aiModels: string; // 적용 AI 모델 (콤마 구분 문자열)
+  input: string;
+  processing: string;
+  output: string;
+  learningMethod: string; // 학습·개발 방식
+}
+
+export interface Architecture {
+  systemName: string; // 통합 시스템명
+  overview: string; // 아키텍처 개요
+  layers: { name: string; description: string }[]; // 4계층
+  modules: ArchModule[]; // 핵심 모듈
+  dataFlow: string; // 모듈 간 데이터 흐름 요약(텍스트)
+  techStack: { layer: string; tech: string }[]; // 기술 스택 요약
+}
+
+export interface Differentiator {
+  id: number;
+  title: string; // 자사 고유 알고리즘 명
+  description: string;
+  rationale: string; // 근거(신규성·특허 출원 가능성)
+}
+
+export interface NecessitySection {
+  heading: string;
+  body: string;
+}
+
+export interface RnDDraft {
+  projectTitle: string; // 연구개발 과제명
+  necessity: NecessitySection[]; // 연구개발의 필요성
+  processModules: ArchModule[]; // 연구개발 과정 프로세스(모듈별)
+}
+
+export interface BusinessPlan {
+  titleCandidates: string[]; // 과제명 후보
+  summaryTable: ArchModule[]; // 모듈별 요약표
+  necessity: NecessitySection[]; // 연구개발의 필요성
+  systemFlow: string; // 운영 시스템 흐름
+  processDetail: ArchModule[]; // 연구개발 프로세스(모듈별 상세)
+  marketStrategy: string; // 사업화·시장 전략
+  teamPlan: string; // 추진 체계·팀 구성
+  engine: "claude" | "demo";
+}
+
+// 프로젝트 전체 산출물(단계별 누적)
+export interface PlanningArtifacts {
+  ideas?: DeepTechIdea[];
+  architecture?: Architecture;
+  differentiators?: Differentiator[];
+  draft?: RnDDraft;
+  plan?: BusinessPlan;
+}
+
+export type GenerateAction =
+  | "ideas"
+  | "architecture"
+  | "differentiators"
+  | "draft"
+  | "plan";
+
+// ---------------------------------------------------------------------------
+// Claude 공통 헬퍼
+// ---------------------------------------------------------------------------
+
+const SYSTEM_BASE = `당신은 딥테크(첨단기술) 정부지원사업 전문 컨설턴트이자 R&D 기획 전문가입니다.
+중소벤처기업부·창업진흥원·정보통신기획평가원(IITP) 등 정부 R&D 과제의 심사 기준(기술성·신규성·사업성·개발가능성)을 정확히 이해하고 있습니다.
+목표는 5억원 이상 규모의 딥테크 지원사업 서류를 통과시키는 것입니다.
+모든 서술은 한국어로, 심사위원을 설득하는 구체적·기술적·정량적 문장으로 작성합니다.
+과장된 형용사 대신 기술 용어(모델명·알고리즘·지표)와 논리적 근거를 사용합니다.`;
+
+async function callClaude<T>(
+  system: string,
+  userPrompt: string,
+  toolName: string,
+  schema: Record<string, unknown>,
+  maxTokens = 4000
+): Promise<T> {
+  const client = new Anthropic({ apiKey: env.anthropicKey });
+  const resp = await client.messages.create({
+    model: env.claudeModel,
+    max_tokens: maxTokens,
+    system: `${SYSTEM_BASE}\n\n${system}`,
+    tools: [{ name: toolName, description: "결과 제출", input_schema: schema as Anthropic.Tool.InputSchema }],
+    tool_choice: { type: "tool", name: toolName },
+    messages: [{ role: "user", content: userPrompt }],
+  });
+  const tu = resp.content.find(
+    (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+  );
+  if (!tu) throw new Error("no tool_use");
+  return tu.input as T;
+}
+
+function problemsBlock(input: PlanningInput): string {
+  const ps = input.problems.filter((p) => p.trim());
+  return ps.map((p, i) => `문제${i + 1}. ${p}`).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Step 1 · 5개 딥테크 아이디어
+// ---------------------------------------------------------------------------
+
+export async function generateIdeas(input: PlanningInput): Promise<DeepTechIdea[]> {
+  if (features.claude) {
+    try {
+      const system = `[작업] 사업 소개와 문제점(페인포인트)을 바탕으로, 정부 딥테크 R&D 과제로 제안 가능한 5개의 딥테크 아이디어를 도출하세요.
+각 아이디어는 (1) AI/첨단기술로 문제를 해결하고 (2) R&D 과제로서 기술 난이도·신규성이 있어야 합니다.
+각 아이디어가 어떤 문제(문제1, 문제2 ...)를 해결하는지 명시하세요.`;
+      const user = `[사업 소개]\n${input.businessIntro}\n\n[해결하고 싶은 문제]\n${problemsBlock(input)}`;
+      const out = await callClaude<{ ideas: DeepTechIdea[] }>(
+        system,
+        user,
+        "submit_ideas",
+        IDEAS_SCHEMA
+      );
+      return (out.ideas || []).slice(0, 5).map((it, i) => ({ ...it, id: i + 1 }));
+    } catch (e) {
+      console.error("[planning] generateIdeas Claude 실패, 데모 대체:", e);
+    }
+  }
+  return demoIdeas(input);
+}
+
+const IDEAS_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    ideas: {
+      type: "array",
+      minItems: 5,
+      maxItems: 5,
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "아이디어 제목(개발 과제형, ~ 시스템/플랫폼 개발)" },
+          summary: { type: "string", description: "2~3문장 설명. 기존 한계와 차별점 포함" },
+          aiTech: { type: "string", description: "핵심 AI 기술 (예: ASR/NLP/강화학습/CV)" },
+          novelty: { type: "string", description: "R&D 과제로서의 신규성·기술 난이도" },
+          solvedProblems: { type: "array", items: { type: "string" } },
+        },
+        required: ["title", "summary", "aiTech", "novelty", "solvedProblems"],
+      },
+    },
+  },
+  required: ["ideas"],
+};
+
+// ---------------------------------------------------------------------------
+// Step 2 · 시스템 아키텍처
+// ---------------------------------------------------------------------------
+
+export async function generateArchitecture(
+  input: PlanningInput,
+  ideas: DeepTechIdea[]
+): Promise<Architecture> {
+  const selected = pickIdeas(input, ideas);
+  if (features.claude) {
+    try {
+      const system = `[작업] 선택된 딥테크 아이디어를 통합하는 시스템 아키텍처를 설계하세요.
+- 4계층(UI Layer, Service Layer, AI Engine Layer, Data Layer) 구조로 설명
+- 핵심 AI 엔진 모듈 4~6개를 정의(각 모듈: 역할, 적용 AI 모델, Input, Processing, Output, 학습·개발 방식)
+- 모듈 간 데이터 흐름을 서술
+- 계층별 기술 스택 제시`;
+      const user = `[사업 소개]\n${input.businessIntro}\n\n[문제점]\n${problemsBlock(input)}\n\n[선택된 아이디어]\n${selected
+        .map((i) => `- ${i.title}: ${i.summary}`)
+        .join("\n")}`;
+      const out = await callClaude<Architecture>(
+        system,
+        user,
+        "submit_architecture",
+        ARCH_SCHEMA,
+        5000
+      );
+      return normalizeArch(out);
+    } catch (e) {
+      console.error("[planning] generateArchitecture Claude 실패, 데모 대체:", e);
+    }
+  }
+  return demoArchitecture(input, selected);
+}
+
+const MODULE_PROPS = {
+  id: { type: "string", description: "모듈1, 모듈2 ..." },
+  name: { type: "string" },
+  role: { type: "string", description: "역할/정의" },
+  aiModels: { type: "string", description: "적용 AI 모델(콤마 구분)" },
+  input: { type: "string" },
+  processing: { type: "string" },
+  output: { type: "string" },
+  learningMethod: { type: "string", description: "학습·개발 방식" },
+};
+const MODULE_REQUIRED = ["id", "name", "role", "aiModels", "input", "processing", "output", "learningMethod"];
+
+const ARCH_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    systemName: { type: "string" },
+    overview: { type: "string" },
+    layers: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, description: { type: "string" } },
+        required: ["name", "description"],
+      },
+    },
+    modules: {
+      type: "array",
+      minItems: 4,
+      items: { type: "object", properties: MODULE_PROPS, required: MODULE_REQUIRED },
+    },
+    dataFlow: { type: "string" },
+    techStack: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { layer: { type: "string" }, tech: { type: "string" } },
+        required: ["layer", "tech"],
+      },
+    },
+  },
+  required: ["systemName", "overview", "layers", "modules", "dataFlow", "techStack"],
+};
+
+// ---------------------------------------------------------------------------
+// Step 3 · 차별화 포인트(핵심 알고리즘·IP)
+// ---------------------------------------------------------------------------
+
+export async function generateDifferentiators(
+  input: PlanningInput,
+  arch: Architecture
+): Promise<Differentiator[]> {
+  if (features.claude) {
+    try {
+      const system = `[작업] 아키텍처의 핵심 모듈을 근거로, 자사 고유의 차별화 알고리즘(핵심 IP) 3~5개를 도출하세요.
+각 항목은 (1) 알고리즘 명, (2) 무엇을 어떻게 하는지, (3) 왜 기존 기술과 다르고 특허 출원/권리화가 가능한지(근거)를 포함합니다.
+선정이력·특허가 없다면, 이 알고리즘들이 향후 특허 출원 대상이 됨을 강조하세요.`;
+      const user = `[시스템명]\n${arch.systemName}\n\n[핵심 모듈]\n${arch.modules
+        .map((m) => `- ${m.name}: ${m.role} (AI: ${m.aiModels})`)
+        .join("\n")}\n\n[선정이력·특허]\n${input.history || "없음"}`;
+      const out = await callClaude<{ differentiators: Differentiator[] }>(
+        system,
+        user,
+        "submit_diff",
+        DIFF_SCHEMA
+      );
+      return (out.differentiators || []).map((d, i) => ({ ...d, id: i + 1 }));
+    } catch (e) {
+      console.error("[planning] generateDifferentiators Claude 실패, 데모 대체:", e);
+    }
+  }
+  return demoDifferentiators(arch);
+}
+
+const DIFF_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    differentiators: {
+      type: "array",
+      minItems: 3,
+      maxItems: 5,
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          rationale: { type: "string", description: "신규성·특허 출원 가능성 근거" },
+        },
+        required: ["title", "description", "rationale"],
+      },
+    },
+  },
+  required: ["differentiators"],
+};
+
+// ---------------------------------------------------------------------------
+// Step 4 · 연구개발 기획 초안
+// ---------------------------------------------------------------------------
+
+export async function generateDraft(
+  input: PlanningInput,
+  arch: Architecture,
+  diffs: Differentiator[]
+): Promise<RnDDraft> {
+  if (features.claude) {
+    try {
+      const system = `[작업] 아래 정보를 모두 취합하여 정부 R&D 연구개발 기획 초안을 작성하세요.
+- projectTitle: 핵심 기술을 담은 연구개발 과제명 1개
+- necessity: 연구개발의 필요성 3개 항목(각 heading + body 3~5문장). 시장/구조적 문제 + 정량 근거
+- processModules: 연구개발 과정 프로세스를 모듈별로 정리(각 모듈: 정의(role), 적용 AI 모델, Input, Processing, Output, 학습·개발 방식). 대표/팀의 보유 데이터·경험을 학습데이터·검증에 활용하는 점을 반영`;
+      const user = `[시스템명] ${arch.systemName}\n[개요] ${arch.overview}\n\n[핵심 모듈]\n${arch.modules
+        .map((m) => `- ${m.id} ${m.name}: ${m.role} / AI: ${m.aiModels} / 학습: ${m.learningMethod}`)
+        .join("\n")}\n\n[차별화 알고리즘]\n${diffs
+        .map((d) => `- ${d.title}: ${d.description}`)
+        .join("\n")}\n\n[대표자 이력]\n${input.founder}\n\n[팀원]\n${input.team}\n\n[문제점]\n${problemsBlock(input)}`;
+      const out = await callClaude<RnDDraft>(system, user, "submit_draft", DRAFT_SCHEMA, 5000);
+      return { ...out, processModules: (out.processModules || []).map(normalizeModule) };
+    } catch (e) {
+      console.error("[planning] generateDraft Claude 실패, 데모 대체:", e);
+    }
+  }
+  return demoDraft(input, arch, diffs);
+}
+
+const DRAFT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    projectTitle: { type: "string" },
+    necessity: {
+      type: "array",
+      minItems: 3,
+      items: {
+        type: "object",
+        properties: { heading: { type: "string" }, body: { type: "string" } },
+        required: ["heading", "body"],
+      },
+    },
+    processModules: {
+      type: "array",
+      minItems: 4,
+      items: { type: "object", properties: MODULE_PROPS, required: MODULE_REQUIRED },
+    },
+  },
+  required: ["projectTitle", "necessity", "processModules"],
+};
+
+// ---------------------------------------------------------------------------
+// 사업계획서 완성
+// ---------------------------------------------------------------------------
+
+export async function generatePlan(
+  input: PlanningInput,
+  artifacts: PlanningArtifacts
+): Promise<BusinessPlan> {
+  const arch = artifacts.architecture;
+  const draft = artifacts.draft;
+  if (features.claude && arch) {
+    try {
+      const system = `[작업] 아래 기술기획 산출물을 정부 딥테크 R&D 사업계획서 양식으로 완성하세요. 반드시 다음을 포함:
+- titleCandidates: 연구개발 과제명 후보 3개
+- summaryTable: 모듈별 요약표(각 모듈의 정의/AI모델/Input/Processing/Output/학습방법)
+- necessity: 연구개발의 필요성 3개 항목(heading + body)
+- systemFlow: 운영 시스템 흐름(사용자 입력→모듈→출력) 서술
+- processDetail: 연구개발 프로세스 모듈별 상세(각 모듈 정의/Input/Processing/AI모델/학습방법/Output)
+- marketStrategy: 사업화·시장진입·수익모델 전략(3~5문장)
+- teamPlan: 추진 체계·팀 구성·역량(대표/팀 이력 반영, 3~5문장)`;
+      const user = `[시스템명] ${arch.systemName}\n[개요] ${arch.overview}\n\n[모듈]\n${arch.modules
+        .map((m) => `${m.id} ${m.name}: 역할=${m.role}; AI=${m.aiModels}; In=${m.input}; Proc=${m.processing}; Out=${m.output}; 학습=${m.learningMethod}`)
+        .join("\n")}\n\n[과제명 초안] ${draft?.projectTitle || arch.systemName}\n[필요성]\n${(draft?.necessity || [])
+        .map((n) => `- ${n.heading}: ${n.body}`)
+        .join("\n")}\n\n[대표] ${input.founder}\n[팀] ${input.team}`;
+      const out = await callClaude<BusinessPlan>(system, user, "submit_plan", PLAN_SCHEMA, 6000);
+      return {
+        ...out,
+        summaryTable: (out.summaryTable || []).map(normalizeModule),
+        processDetail: (out.processDetail || []).map(normalizeModule),
+        engine: "claude",
+      };
+    } catch (e) {
+      console.error("[planning] generatePlan Claude 실패, 데모 대체:", e);
+    }
+  }
+  return demoPlan(input, artifacts);
+}
+
+const PLAN_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    titleCandidates: { type: "array", items: { type: "string" }, minItems: 3 },
+    summaryTable: {
+      type: "array",
+      items: { type: "object", properties: MODULE_PROPS, required: MODULE_REQUIRED },
+    },
+    necessity: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { heading: { type: "string" }, body: { type: "string" } },
+        required: ["heading", "body"],
+      },
+    },
+    systemFlow: { type: "string" },
+    processDetail: {
+      type: "array",
+      items: { type: "object", properties: MODULE_PROPS, required: MODULE_REQUIRED },
+    },
+    marketStrategy: { type: "string" },
+    teamPlan: { type: "string" },
+  },
+  required: ["titleCandidates", "summaryTable", "necessity", "systemFlow", "processDetail", "marketStrategy", "teamPlan"],
+};
+
+// ---------------------------------------------------------------------------
+// 유틸
+// ---------------------------------------------------------------------------
+
+export function pickIdeas(input: PlanningInput, ideas: DeepTechIdea[]): DeepTechIdea[] {
+  if (!input.selectedIdeaIds?.length) return ideas;
+  const sel = ideas.filter((i) => input.selectedIdeaIds.includes(i.id));
+  return sel.length ? sel : ideas;
+}
+
+function normalizeModule(m: Partial<ArchModule>, i = 0): ArchModule {
+  return {
+    id: m.id || `모듈${i + 1}`,
+    name: m.name || `모듈 ${i + 1}`,
+    role: m.role || "",
+    aiModels: m.aiModels || "",
+    input: m.input || "",
+    processing: m.processing || "",
+    output: m.output || "",
+    learningMethod: m.learningMethod || "",
+  };
+}
+
+function normalizeArch(a: Architecture): Architecture {
+  return {
+    systemName: a.systemName || "통합 AI 플랫폼",
+    overview: a.overview || "",
+    layers: a.layers?.length
+      ? a.layers
+      : DEFAULT_LAYERS,
+    modules: (a.modules || []).map((m, i) => normalizeModule(m, i)),
+    dataFlow: a.dataFlow || "",
+    techStack: a.techStack?.length ? a.techStack : DEFAULT_STACK,
+  };
+}
+
+const DEFAULT_LAYERS = [
+  { name: "UI Layer (사용자 인터페이스)", description: "웹/모바일 대시보드, 입력·결과 화면, 알림" },
+  { name: "Service Layer (서비스 제공)", description: "API 서버, 콘텐츠·리포트 제공, 비동기 처리" },
+  { name: "AI Engine Layer (핵심 AI)", description: "핵심 AI 분석·처리 모듈, 중앙 프로파일 DB 공유" },
+  { name: "Data Layer (데이터 수집·저장)", description: "행동 로그·원시 데이터·모델 학습 데이터 저장" },
+];
+
+const DEFAULT_STACK = [
+  { layer: "Data Layer", tech: "PostgreSQL, MongoDB(로그), Redis(캐시), S3(파일)" },
+  { layer: "AI Engine Layer", tech: "PyTorch/TensorFlow, HuggingFace, FastAPI(서빙), MLflow" },
+  { layer: "Service Layer", tech: "Node.js/Spring Boot, 메시지 큐, Kubernetes" },
+  { layer: "UI Layer", tech: "React/Next.js, Flutter, WebSocket" },
+];
+
+// ---------------------------------------------------------------------------
+// 데모 생성 (키 없이도 흐름 시연) — 입력 기반 템플릿
+// ---------------------------------------------------------------------------
+
+function domainWord(input: PlanningInput): string {
+  const t = (input.businessIntro || "").replace(/\s+/g, " ").trim();
+  return t ? t.split(" ").slice(0, 6).join(" ") : "본 사업";
+}
+
+function demoIdeas(input: PlanningInput): DeepTechIdea[] {
+  const d = domainWord(input);
+  const ps = input.problems.filter((p) => p.trim());
+  const patterns = [
+    { t: "AI 기반 적응형 통합 코칭 플랫폼", tech: "Deep Knowledge Tracing, 강화학습(RL)", nov: "사용자 행동 데이터로 개인별 최적 경로를 실시간 산출하는 도메인 특화 최적화" },
+    { t: "신호·데이터 분석 AI 진단 시스템", tech: "신호처리 딥러닝(CNN/BiLSTM), 이상탐지", nov: "실패·오류 지점을 미세 단위까지 역추적하는 정밀 진단 알고리즘" },
+    { t: "AI 자동 분석·근인(Root Cause) 진단 시스템", tech: "NLP(BERT 파인튜닝), 다층 분류", nov: "표층·심층 원인을 2단계로 분류하고 처방까지 연결하는 폐쇄 루프" },
+    { t: "이탈 예측·행동 넛지 자동화 시스템", tech: "XGBoost/LSTM, Contextual Bandit", nov: "이탈 원인 유형 분류 후 강화학습으로 개입 전략을 자기 진화" },
+    { t: "LLM 기반 맞춤 튜터·생성 시스템", tech: "대규모 언어모델(LLM) 파인튜닝, RAG", nov: "도메인 특화 지식으로 실시간 맞춤 코칭·콘텐츠를 자동 생성" },
+  ];
+  return patterns.map((p, i) => ({
+    id: i + 1,
+    title: `${d} 특화 ${p.t} 개발`,
+    summary: `${d}의 핵심 문제를 해결하기 위해 ${p.tech}를 적용한다. 기존 방식과 달리 ${p.nov}으로 차별화한다.`,
+    aiTech: p.tech,
+    novelty: p.nov,
+    solvedProblems: ps.length ? [ps[Math.min(i, ps.length - 1)].slice(0, 40)] : ["핵심 페인포인트"],
+  }));
+}
+
+function demoArchitecture(input: PlanningInput, selected: DeepTechIdea[]): Architecture {
+  const modules: ArchModule[] = selected.slice(0, 6).map((idea, i) => ({
+    id: `모듈${i + 1}`,
+    name: idea.title.replace(/ 개발$/, "").split(" ").slice(-3).join(" ") + " 엔진",
+    role: idea.summary,
+    aiModels: idea.aiTech,
+    input: "사용자/도메인 원시 데이터, 이전 모듈 산출물, 프로파일 정보",
+    processing: "수집·정제 → 특징 추출 → 모델 추론 → 결과 태깅 및 리포트 생성",
+    output: "정량 지표, 취약점/기회 분석, 다음 단계 처방 및 콘텐츠",
+    learningMethod: "보유 데이터로 사전학습 후 실사용 데이터로 온라인 파인튜닝(전문가 검수 Human-in-the-Loop)",
+  }));
+  if (!modules.length) {
+    modules.push(...demoIdeas(input).slice(0, 4).map((idea, i) => ({
+      id: `모듈${i + 1}`,
+      name: idea.title + " 엔진",
+      role: idea.summary,
+      aiModels: idea.aiTech,
+      input: "원시 데이터, 프로파일",
+      processing: "전처리 → 추론 → 태깅",
+      output: "지표·분석·처방",
+      learningMethod: "사전학습 후 온라인 파인튜닝",
+    })));
+  }
+  return {
+    systemName: `${domainWord(input)} 통합 AI 플랫폼`,
+    overview:
+      "본 플랫폼은 데이터 수집(Data), AI 분석·처리(AI Engine), 서비스 제공(Service), 사용자 인터페이스(UI)의 4계층으로 구성된다. 각 모듈은 독립 작동하면서 중앙 프로파일 DB를 공유하여 통합 진단과 맞춤 처방을 실현한다.",
+    layers: DEFAULT_LAYERS,
+    modules,
+    dataFlow:
+      "[Data Layer] → 원시 데이터 수집 → [핵심 모듈들] ↔ [중앙 프로파일 DB] → 분석 결과가 통합 진단 모듈로 피드백 → [Service Layer] → [UI Layer]로 개인화 결과 전달. 각 모듈의 산출물이 다른 모듈의 입력으로 순환하는 폐쇄 루프 구조.",
+    techStack: DEFAULT_STACK,
+  };
+}
+
+function demoDifferentiators(arch: Architecture): Differentiator[] {
+  return arch.modules.slice(0, 4).map((m, i) => ({
+    id: i + 1,
+    title: `${m.name.replace(/ 엔진$/, "")} 특화 알고리즘`,
+    description: `${m.role} 이를 위해 ${m.aiModels}를 결합하여, 일반 솔루션이 제공하지 못하는 정밀 분석·처방을 자동 수행하는 자사 고유 알고리즘이다.`,
+    rationale:
+      "기존 시장 솔루션은 단순 통계·규칙 기반에 그치나, 본 알고리즘은 도메인 특화 데이터로 원인을 정밀 추적하고 처방까지 자동 연결한다. 진단→원인분류→처방→효과검증→재진단의 폐쇄 루프 구조는 특허 청구항 구성이 명확하여 권리화 가능성이 높다.",
+  }));
+}
+
+function demoDraft(input: PlanningInput, arch: Architecture, diffs: Differentiator[]): RnDDraft {
+  return {
+    projectTitle: `${arch.systemName} 개발 — ${diffs
+      .slice(0, 2)
+      .map((d) => d.title.replace(/ 특화 알고리즘$/, ""))
+      .join("·")} 기반 AI 적응형 통합 시스템`,
+    necessity: [
+      {
+        heading: "고비용·고의존 구조의 한계",
+        body: "현재 시장은 소수 전문 인력에 의존하는 구조로 인건비 비중이 높고 수급이 어렵다. AI 기반 자동화로 인력 의존도를 낮추고 일관된 고품질 서비스를 저비용·대규모로 제공하는 기술 개발이 필요하다.",
+      },
+      {
+        heading: "분절형 서비스와 지속 실패의 구조적 문제",
+        body: "기존 서비스는 기능이 분리되어 통합 관리가 어렵고 사용자 이탈·지속 실패가 반복된다. 행동 데이터를 실시간 분석해 동기를 유지하고 전 영역을 통합 관리하는 AI 시스템 개발이 시급하다.",
+      },
+      {
+        heading: "정밀 진단·분석 부재로 인한 비효율",
+        body: "원인을 정확히 진단하지 못하면 동일 문제가 반복된다. 미세 단위 실패 검출, NLP 기반 근인 분석 등 정밀 진단 기술로 비효율을 근본 해소하는 R&D가 필요하다.",
+      },
+    ],
+    processModules: arch.modules,
+  };
+}
+
+function demoPlan(input: PlanningInput, artifacts: PlanningArtifacts): BusinessPlan {
+  const arch = artifacts.architecture || demoArchitecture(input, artifacts.ideas || demoIdeas(input));
+  const draft = artifacts.draft || demoDraft(input, arch, artifacts.differentiators || demoDifferentiators(arch));
+  return {
+    titleCandidates: [
+      draft.projectTitle,
+      `${arch.systemName} 개발`,
+      `AI 기반 ${domainWord(input)} 자동화 솔루션 개발`,
+    ],
+    summaryTable: arch.modules,
+    necessity: draft.necessity,
+    systemFlow:
+      "사용자가 웹/모바일에서 데이터를 입력하면, 각 AI 모듈이 순차적으로 수집·전처리 → 분석·평가 → 종합 판정 → 맞춤 피드백을 생성하고, 결과를 대시보드로 제공한다. " +
+      arch.modules.map((m) => m.id).join(" → ") + " → 사용자 대시보드 출력.",
+    processDetail: arch.modules,
+    marketStrategy:
+      "초기에는 자사 보유 고객·채널을 기반으로 서비스를 검증하고, 이후 B2C 구독 + B2B(기관) 라이선스로 확장한다. 데이터가 축적될수록 모델 정확도와 진입장벽이 강화되는 선순환 구조로 수익성과 방어력을 동시에 확보한다.",
+    teamPlan:
+      `대표자는 해당 도메인의 오랜 현장 경험과 데이터를 보유하고 있어 학습데이터 확보·검수(Human-in-the-Loop)에 강점이 있다. ${input.team || "AI 개발/운영 인력을 단계적으로 채용"}하여 개발-검증-운영 체계를 구축한다.`,
+    engine: "demo",
+  };
+}
