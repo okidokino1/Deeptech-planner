@@ -8,7 +8,6 @@ import {
   FileCheck2,
   Presentation,
   ArrowRight,
-  CheckCircle2,
   FileText,
   Bot,
 } from "lucide-react";
@@ -74,10 +73,7 @@ export default function Home() {
           </div>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-slate-500">
             <span className="inline-flex items-center gap-1.5">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" /> 가입 시 1건 무료
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <FileText className="h-4 w-4 text-emerald-500" /> Word(.docx) 내보내기
+              <FileText className="h-4 w-4 text-emerald-500" /> Word(.docx) or 한글(.hwp) 내보내기
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Presentation className="h-4 w-4 text-emerald-500" /> 발표 연습·예상 Q&A

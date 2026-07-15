@@ -64,9 +64,12 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         <Link href={`/studio/${id}`} className="btn-ghost px-2 py-1.5 text-sm">
           <ArrowLeft className="h-4 w-4" /> 기획으로
         </Link>
-        <div className="flex gap-2">
-          <a href={`/api/planning/export?projectId=${id}`} className="btn-primary px-4 py-2 text-sm">
-            <Download className="h-4 w-4" /> Word(.docx) 다운로드
+        <div className="flex flex-wrap gap-2">
+          <a href={`/api/planning/export?projectId=${id}&format=docx`} className="btn-primary px-4 py-2 text-sm">
+            <Download className="h-4 w-4" /> Word(.docx)
+          </a>
+          <a href={`/api/planning/export?projectId=${id}&format=hwp`} className="btn-outline px-4 py-2 text-sm">
+            <Download className="h-4 w-4" /> 한글(.hwp)
           </a>
           <Link href={`/studio/${id}/rehearsal`} className="btn-outline px-4 py-2 text-sm">
             <Presentation className="h-4 w-4" /> 발표연습
@@ -195,10 +198,19 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
         <p className="mt-3 text-sm leading-relaxed text-slate-600">{plan.teamPlan}</p>
       </section>
 
-      <div className="flex justify-center pb-4">
-        <a href={`/api/planning/export?projectId=${id}`} className="btn-primary px-6 py-3">
-          <Download className="h-4 w-4" /> Word(.docx)로 내려받기
-        </a>
+      <div className="flex flex-col items-center gap-2 pb-4">
+        <div className="flex flex-wrap justify-center gap-2">
+          <a href={`/api/planning/export?projectId=${id}&format=docx`} className="btn-primary px-6 py-3">
+            <Download className="h-4 w-4" /> Word(.docx)로 내려받기
+          </a>
+          <a href={`/api/planning/export?projectId=${id}&format=hwp`} className="btn-outline px-6 py-3">
+            <Download className="h-4 w-4" /> 한글(.hwp)로 내려받기
+          </a>
+        </div>
+        <p className="text-center text-xs text-slate-400">
+          한글 파일은 한글(HWP)에서 바로 열려 편집할 수 있는 형식(.rtf)으로 내려받습니다.
+          한글에서 열어 <b>다른 이름으로 저장 → .hwp</b>로 바꿔 제출하세요.
+        </p>
       </div>
     </div>
   );

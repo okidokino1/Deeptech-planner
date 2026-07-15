@@ -1,28 +1,45 @@
 import { getSessionUser } from "@/lib/auth";
 import { getProject } from "@/lib/planningStore";
 import { buildPlanDocx } from "@/lib/planningDocx";
+import { buildPlanRtf } from "@/lib/planningRtf";
 
 export const runtime = "nodejs";
 
-// GET /api/planning/export?projectId=... → 사업계획서 .docx 다운로드
+// GET /api/planning/export?projectId=...&format=docx|hwp
+//   docx → Word(.docx)
+//   hwp  → 한글이 여는 RTF(.rtf) — 한글에서 .hwp로 저장 가능
 export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return new Response("인증이 필요합니다.", { status: 401 });
 
   const { searchParams } = new URL(req.url);
   const projectId = searchParams.get("projectId");
+  const format = (searchParams.get("format") || "docx").toLowerCase();
   if (!projectId) return new Response("projectId 필요", { status: 400 });
 
   const project = await getProject(user.id, projectId);
   if (!project) return new Response("프로젝트 없음", { status: 404 });
 
-  const buffer = await buildPlanDocx(project);
   const rawName = (project.artifacts.plan?.titleCandidates?.[0] || project.title || "사업계획서")
     .replace(/[\\/:*?"<>|]/g, " ")
     .slice(0, 80);
-  const fileName = `${rawName}.docx`;
-  const encoded = encodeURIComponent(fileName);
 
+  if (format === "hwp" || format === "rtf") {
+    const rtf = buildPlanRtf(project);
+    const encoded = encodeURIComponent(`${rawName}.rtf`);
+    return new Response(rtf, {
+      status: 200,
+      headers: {
+        // RTF: 한글(Hangul)·MS Word 모두 열림. 한글에서 .hwp로 다시 저장 가능.
+        "Content-Type": "application/rtf; charset=utf-8",
+        "Content-Disposition": `attachment; filename="plan.rtf"; filename*=UTF-8''${encoded}`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  const buffer = await buildPlanDocx(project);
+  const encoded = encodeURIComponent(`${rawName}.docx`);
   return new Response(new Uint8Array(buffer), {
     status: 200,
     headers: {
