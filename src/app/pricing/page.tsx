@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Check, Rocket, ArrowLeft } from "lucide-react";
-import { PLANS } from "@/lib/plans";
+import { listPlans } from "@/lib/plans";
 import { getSessionUser } from "@/lib/auth";
 import { features } from "@/lib/env";
 import { CheckoutButton } from "@/components/CheckoutButton";
@@ -14,6 +14,7 @@ export default async function PricingPage({
 }) {
   const user = await getSessionUser();
   const { reason } = await searchParams;
+  const plans = await listPlans();
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
@@ -48,7 +49,7 @@ export default async function PricingPage({
         </div>
 
         <div className="mt-12 grid gap-6 md:grid-cols-3">
-          {PLANS.map((plan) => (
+          {plans.map((plan) => (
             <div
               key={plan.id}
               className={`card relative flex flex-col p-7 ${

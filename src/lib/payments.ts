@@ -57,7 +57,7 @@ export async function settleOrder(
   if (!row) return { ok: false };
   if (row.status === "paid") return { ok: true, already: true };
 
-  const plan = getPlan(planIdFromOrder(orderId));
+  const plan = await getPlan(planIdFromOrder(orderId));
   if (!plan) return { ok: false };
 
   const { data: prof } = await sb

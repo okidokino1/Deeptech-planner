@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, Users, Building2, CreditCard } from "lucide-react";
+import { LayoutGrid, Users, Building2, CreditCard, Tag } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function AdminNav({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
@@ -12,6 +12,7 @@ export function AdminNav({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
     { href: "/admin/members", label: "회원", icon: Users },
     ...(isPlatformAdmin ? [{ href: "/admin/organizations", label: "기관", icon: Building2 }] : []),
     { href: "/admin/revenue", label: "매출", icon: CreditCard },
+    ...(isPlatformAdmin ? [{ href: "/admin/plans", label: "요금제", icon: Tag }] : []),
   ];
   return (
     <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">

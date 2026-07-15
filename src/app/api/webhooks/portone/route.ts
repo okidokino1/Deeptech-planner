@@ -27,7 +27,7 @@ export async function POST(req: Request) {
         { headers: { Authorization: `PortOne ${env.portoneApiSecret}` } }
       );
       const payment = await res.json();
-      const plan = getPlan(planIdFromOrder(orderId));
+      const plan = await getPlan(planIdFromOrder(orderId));
       if (
         plan &&
         payment?.status === "PAID" &&
