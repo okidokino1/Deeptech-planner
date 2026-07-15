@@ -9,6 +9,7 @@ import {
   Settings,
   LogOut,
   Sparkles,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Profile } from "@/lib/types";
@@ -20,8 +21,11 @@ const NAV = [
   { href: "/settings", label: "설정", icon: Settings },
 ];
 
+const ADMIN_NAV = { href: "/admin", label: "CRM", icon: Users };
+
 export function Sidebar({ user }: { user: Profile }) {
   const pathname = usePathname();
+  const nav = user.isStaff ? [...NAV, ADMIN_NAV] : NAV;
   return (
     <aside className="hidden lg:flex w-64 shrink-0 flex-col bg-slate-900 text-slate-300">
       <div className="px-6 pt-6 pb-5">
@@ -37,7 +41,7 @@ export function Sidebar({ user }: { user: Profile }) {
       </div>
 
       <nav className="flex-1 space-y-1 px-3">
-        {NAV.map((item) => {
+        {nav.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
           return (

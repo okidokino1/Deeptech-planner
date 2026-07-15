@@ -14,6 +14,7 @@ const NAV = [
 
 export function MobileNav({ user }: { user: Profile }) {
   const [open, setOpen] = useState(false);
+  const nav = user.isStaff ? [...NAV, { href: "/admin", label: "CRM" }] : NAV;
   return (
     <div className="lg:hidden">
       <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
@@ -29,7 +30,7 @@ export function MobileNav({ user }: { user: Profile }) {
       </div>
       {open && (
         <div className="border-b border-slate-200 bg-white px-4 py-2">
-          {NAV.map((n) => (
+          {nav.map((n) => (
             <Link
               key={n.href}
               href={n.href}
