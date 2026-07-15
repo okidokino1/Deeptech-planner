@@ -46,6 +46,29 @@ function moduleBlock(m: ArchModule): string {
   );
 }
 
+// RTF 표: 6열. cellx = 열 오른쪽 경계(twips) 누적. A4 가용폭 ≈ 9020 twips.
+const RTF_EDGES = [1500, 2820, 4800, 6080, 7560, 9020];
+function rtfRowDef(shade: boolean): string {
+  return (
+    "\\trowd\\trgaph108\\trleft0" +
+    RTF_EDGES.map(
+      (e) =>
+        "\\clvertalc\\clbrdrt\\brdrs\\brdrw10\\clbrdrl\\brdrs\\brdrw10\\clbrdrb\\brdrs\\brdrw10\\clbrdrr\\brdrs\\brdrw10" +
+        (shade ? "\\clcbpat2" : "") +
+        `\\cellx${e}`
+    ).join("")
+  );
+}
+function rtfTable(headers: string[], rows: string[][]): string {
+  const cells = (arr: string[], bold: boolean) =>
+    arr.map((t) => `\\pard\\intbl\\fs16${bold ? "\\b" : ""} ${esc(t)}\\cell`).join("");
+  let out = rtfRowDef(true) + cells(headers, true) + "\\row\n";
+  rows.forEach((r) => {
+    out += rtfRowDef(false) + cells(r, false) + "\\row\n";
+  });
+  return out + "{\\pard\\sa100\\par}\n";
+}
+
 export function buildPlanRtf(project: PlanningProject): string {
   const a = project.artifacts;
   const plan = a.plan;
@@ -61,8 +84,11 @@ export function buildPlanRtf(project: PlanningProject): string {
   if (plan) {
     // 0. 모듈별 요약
     if (plan.summaryTable?.length) {
-      c += h1("0. 모듈별 요약");
-      plan.summaryTable.forEach((m) => (c += moduleBlock(m)));
+      c += h1("0. 모듈별 요약표");
+      c += rtfTable(
+        ["모듈", "Input", "Processing", "AI 모델", "학습방법", "Output"],
+        plan.summaryTable.map((m) => [`${m.id}. ${m.name}`, m.input, m.processing, m.aiModels, m.learningMethod, m.output])
+      );
     }
     // 1. 과제명 후보
     c += h1("1. 연구개발 과제명(후보)");
@@ -120,7 +146,7 @@ export function buildPlanRtf(project: PlanningProject): string {
   const header =
     `{\\rtf1\\ansi\\ansicpg949\\deff0\\deflang1042` +
     `{\\fonttbl{\\f0\\fnil\\fcharset129 Malgun Gothic;}{\\f1\\fnil\\fcharset129 \\uc0\\u47569 \\u51008  \\u44256 \\u46357 ;}}` +
-    `{\\colortbl;\\red79\\green70\\blue229;}` +
+    `{\\colortbl;\\red79\\green70\\blue229;\\red238\\green242\\blue255;}` +
     `\\viewkind4\\uc1\\f0 `;
   return header + c + "}";
 }

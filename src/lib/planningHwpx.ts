@@ -42,6 +42,58 @@ function moduleBlock(m: ArchModule): string {
   );
 }
 
+// ── 표(테이블) ──────────────────────────────────────────────────────────────
+const COLW = [7000, 6200, 9320, 6000, 7000, 7000]; // 6열, 합계 42520 HWPUNIT
+const TBLW = 42520;
+
+function cellPara(text: string, charId: number): string {
+  return (
+    `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
+    `<hp:run charPrIDRef="${charId}"><hp:t>${x(text)}</hp:t></hp:run>` +
+    `<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="800" textheight="800" baseline="680" spacing="430" horzpos="0" horzsize="6000" flags="393216"/></hp:linesegarray>` +
+    `</hp:p>`
+  );
+}
+
+function cell(text: string, col: number, row: number, w: number, h: number, isHeader: boolean): string {
+  const bf = isHeader ? 4 : 3; // 4=헤더(음영), 3=일반 (둘 다 실선)
+  const cid = isHeader ? 6 : 5; // 6=작은 볼드, 5=작은 본문
+  return (
+    `<hp:tc name="" header="${isHeader ? 1 : 0}" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="${bf}">` +
+    `<hp:cellAddr colAddr="${col}" rowAddr="${row}"/>` +
+    `<hp:cellSpan colSpan="1" rowSpan="1"/>` +
+    `<hp:cellSz width="${w}" height="${h}"/>` +
+    `<hp:cellMargin left="141" right="141" top="70" bottom="70"/>` +
+    `<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">` +
+    cellPara(text, cid) +
+    `</hp:subList></hp:tc>`
+  );
+}
+
+function hwpxTable(headers: string[], rows: string[][]): string {
+  const C = headers.length;
+  const headH = 1400;
+  const bodyH = 3600;
+  const totalH = headH + bodyH * rows.length;
+  let trs = `<hp:tr>` + headers.map((hd, c) => cell(hd, c, 0, COLW[c] || 6000, headH, true)).join("") + `</hp:tr>`;
+  rows.forEach((r, ri) => {
+    trs += `<hp:tr>` + r.map((v, c) => cell(v, c, ri + 1, COLW[c] || 6000, bodyH, false)).join("") + `</hp:tr>`;
+  });
+  return (
+    `<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
+    `<hp:run charPrIDRef="0">` +
+    `<hp:tbl id="1" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="${rows.length + 1}" colCnt="${C}" cellSpacing="0" borderFillIDRef="3" noAdjust="0">` +
+    `<hp:sz width="${TBLW}" widthRelTo="ABSOLUTE" height="${totalH}" heightRelTo="ABSOLUTE" protect="0"/>` +
+    `<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>` +
+    `<hp:outMargin left="0" right="0" top="0" bottom="0"/>` +
+    `<hp:inMargin left="141" right="141" top="141" bottom="141"/>` +
+    trs +
+    `</hp:tbl></hp:run>` +
+    `<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1100" textheight="1100" baseline="935" spacing="600" horzpos="0" horzsize="42520" flags="1441792"/></hp:linesegarray>` +
+    `</hp:p>`
+  );
+}
+
 // ── 섹션 본문 (section0.xml) 문단 생성 ──────────────────────────────────────
 function buildParagraphs(project: PlanningProject): string {
   const a = project.artifacts;
@@ -57,8 +109,11 @@ function buildParagraphs(project: PlanningProject): string {
 
   if (plan) {
     if (plan.summaryTable?.length) {
-      s += p("0. 모듈별 요약", 1, 0);
-      plan.summaryTable.forEach((m) => (s += moduleBlock(m)));
+      s += p("0. 모듈별 요약표", 1, 0);
+      s += hwpxTable(
+        ["모듈", "Input", "Processing", "AI 모델", "학습방법", "Output"],
+        plan.summaryTable.map((m) => [`${m.id}. ${m.name}`, m.input, m.processing, m.aiModels, m.learningMethod, m.output])
+      );
     }
     s += p("1. 연구개발 과제명(후보)", 1, 0);
     plan.titleCandidates?.forEach((t, i) => (s += p(`후보 ${i + 1}. ${t}`, 0, 0)));
@@ -171,6 +226,23 @@ function borderFill(id: number): string {
   );
 }
 
+// 실선 테두리 셀용 borderFill (fill="none"이면 배경 없음)
+function solidFill(id: number, fill: string): string {
+  const b = (side: string) => `<hh:${side} type="SOLID" width="0.12 mm" color="#000000"/>`;
+  const brush =
+    fill === "none"
+      ? `<hc:winBrush faceColor="none" hatchColor="#999999" alpha="0"/>`
+      : `<hc:winBrush faceColor="${fill}" hatchColor="#333333" alpha="0"/>`;
+  return (
+    `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0">` +
+    `<hh:slash type="NONE" Crooked="0" isCounter="0"/><hh:backSlash type="NONE" Crooked="0" isCounter="0"/>` +
+    b("leftBorder") + b("rightBorder") + b("topBorder") + b("bottomBorder") +
+    `<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>` +
+    `<hc:fillBrush>${brush}</hc:fillBrush>` +
+    `</hh:borderFill>`
+  );
+}
+
 function paraPr(id: number, align: string): string {
   return (
     `<hh:paraPr id="${id}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">` +
@@ -192,8 +264,8 @@ function headerXml(): string {
     `<hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>` +
     `<hh:refList>` +
     fontfaces() +
-    `<hh:borderFills itemCnt="2">${borderFill(1)}${borderFill(2)}</hh:borderFills>` +
-    `<hh:charProperties itemCnt="5">${charPr(0, 1100, false)}${charPr(1, 1500, true)}${charPr(2, 1300, true)}${charPr(3, 1200, true)}${charPr(4, 1900, true)}</hh:charProperties>` +
+    `<hh:borderFills itemCnt="4">${borderFill(1)}${borderFill(2)}${solidFill(3, "none")}${solidFill(4, "#EEF2FF")}</hh:borderFills>` +
+    `<hh:charProperties itemCnt="7">${charPr(0, 1100, false)}${charPr(1, 1500, true)}${charPr(2, 1300, true)}${charPr(3, 1200, true)}${charPr(4, 1900, true)}${charPr(5, 800, false)}${charPr(6, 800, true)}</hh:charProperties>` +
     `<hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties>` +
     `<hh:numberings itemCnt="0"/>` +
     `<hh:paraProperties itemCnt="2">${paraPr(0, "JUSTIFY")}${paraPr(1, "CENTER")}</hh:paraProperties>` +
