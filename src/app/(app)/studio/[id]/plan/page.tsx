@@ -68,8 +68,8 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
           <a href={`/api/planning/export?projectId=${id}&format=docx`} className="btn-primary px-4 py-2 text-sm">
             <Download className="h-4 w-4" /> Word(.docx)
           </a>
-          <a href={`/api/planning/export?projectId=${id}&format=hwp`} className="btn-outline px-4 py-2 text-sm">
-            <Download className="h-4 w-4" /> 한글(.hwp)
+          <a href={`/api/planning/export?projectId=${id}&format=hwpx`} className="btn-outline px-4 py-2 text-sm">
+            <Download className="h-4 w-4" /> 한글(.hwpx)
           </a>
           <Link href={`/studio/${id}/rehearsal`} className="btn-outline px-4 py-2 text-sm">
             <Presentation className="h-4 w-4" /> 발표연습
@@ -203,13 +203,13 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
           <a href={`/api/planning/export?projectId=${id}&format=docx`} className="btn-primary px-6 py-3">
             <Download className="h-4 w-4" /> Word(.docx)로 내려받기
           </a>
-          <a href={`/api/planning/export?projectId=${id}&format=hwp`} className="btn-outline px-6 py-3">
-            <Download className="h-4 w-4" /> 한글(.hwp)로 내려받기
+          <a href={`/api/planning/export?projectId=${id}&format=hwpx`} className="btn-outline px-6 py-3">
+            <Download className="h-4 w-4" /> 한글(.hwpx)로 내려받기
           </a>
         </div>
         <p className="text-center text-xs text-slate-400">
-          한글 파일은 한글(HWP)에서 바로 열려 편집할 수 있는 형식(.rtf)으로 내려받습니다.
-          한글에서 열어 <b>다른 이름으로 저장 → .hwp</b>로 바꿔 제출하세요.
+          한글 파일은 <b>.hwpx(한글 개방 포맷)</b>으로 내려받습니다 — 한글 2014 이상에서 바로 열립니다.
+          열어서 <b>다른 이름으로 저장 → .hwp</b>로 바꿔 제출하세요.
         </p>
       </div>
     </div>

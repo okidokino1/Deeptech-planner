@@ -2,12 +2,14 @@ import { getSessionUser } from "@/lib/auth";
 import { getProject } from "@/lib/planningStore";
 import { buildPlanDocx } from "@/lib/planningDocx";
 import { buildPlanRtf } from "@/lib/planningRtf";
+import { buildPlanHwpx } from "@/lib/planningHwpx";
 
 export const runtime = "nodejs";
 
-// GET /api/planning/export?projectId=...&format=docx|hwp
+// GET /api/planning/export?projectId=...&format=docx|hwpx|rtf
 //   docx → Word(.docx)
-//   hwp  → 한글이 여는 RTF(.rtf) — 한글에서 .hwp로 저장 가능
+//   hwpx → 한글 네이티브 포맷(.hwpx) — 한글 2014+에서 열림
+//   rtf  → 한글/워드가 여는 RTF(.rtf) 폴백
 export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return new Response("인증이 필요합니다.", { status: 401 });
@@ -23,6 +25,19 @@ export async function GET(req: Request) {
   const rawName = (project.artifacts.plan?.titleCandidates?.[0] || project.title || "사업계획서")
     .replace(/[\\/:*?"<>|]/g, " ")
     .slice(0, 80);
+
+  if (format === "hwpx") {
+    const buf = await buildPlanHwpx(project);
+    const encoded = encodeURIComponent(`${rawName}.hwpx`);
+    return new Response(new Uint8Array(buf), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/hwp+zip",
+        "Content-Disposition": `attachment; filename="plan.hwpx"; filename*=UTF-8''${encoded}`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   if (format === "hwp" || format === "rtf") {
     const rtf = buildPlanRtf(project);
