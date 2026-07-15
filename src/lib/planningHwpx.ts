@@ -18,12 +18,13 @@ function x(s: string | undefined): string {
     .replace(/"/g, "&quot;");
 }
 
-// 문단: charPr(글자모양) / paraPr(문단모양) ID 참조
+// 문단: charPr(글자모양) / paraPr(문단모양) ID 참조.
+// linesegarray(줄 레이아웃 캐시)는 넣지 않는다 → 한글이 열 때 줄바꿈을 스스로 계산하도록.
+// (고정 lineseg를 넣으면 긴 문단이 한 줄에 강제로 채워져 글자가 벌어지는 문제 발생)
 function p(text: string, charId = 0, paraId = 0, secPr = ""): string {
   return (
     `<hp:p id="0" paraPrIDRef="${paraId}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">` +
     `<hp:run charPrIDRef="${charId}">${secPr}<hp:t>${x(text)}</hp:t></hp:run>` +
-    `<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1100" textheight="1100" baseline="935" spacing="600" horzpos="0" horzsize="42520" flags="393216"/></hp:linesegarray>` +
     `</hp:p>`
   );
 }
