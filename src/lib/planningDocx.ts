@@ -107,6 +107,8 @@ function moduleDetail(m: ArchModule): Paragraph[] {
     body("Processing: " + m.processing),
     body("학습·개발 방식: " + m.learningMethod),
     body("Output: " + m.output),
+    ...(m.metrics ? [body("정량 성능 목표: " + m.metrics)] : []),
+    ...(m.rationale ? [body("모델 선정 근거: " + m.rationale)] : []),
   ];
 }
 

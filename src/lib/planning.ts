@@ -11,6 +11,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { env, features } from "./env";
+import { modelSelectionGuide, WINNING_PLAN_STYLE } from "./aiModels";
 
 // ---------------------------------------------------------------------------
 // 데이터 모델
@@ -45,17 +46,20 @@ export interface DeepTechIdea {
   aiTech: string; // 핵심 AI 기술 (ASR/NLP/RL/CV ...)
   novelty: string; // R&D 과제로서의 신규성·난이도
   solvedProblems: string[]; // 해결하는 문제 요약
+  metrics?: string; // 정량 성능 목표(선택)
 }
 
 export interface ArchModule {
   id: string; // "모듈1" | "M1"
   name: string; // 엔진/모듈명
   role: string; // 역할/정의
-  aiModels: string; // 적용 AI 모델 (콤마 구분 문자열)
+  aiModels: string; // 적용 AI 모델 (구체 모델명, 콤마 구분)
   input: string;
   processing: string;
   output: string;
   learningMethod: string; // 학습·개발 방식
+  metrics?: string; // 정량 성능 목표 (표준 지표 + 수치)
+  rationale?: string; // 모델 선정 근거 (검토한 대안 대비 선택 이유)
 }
 
 export interface Architecture {
@@ -120,7 +124,9 @@ const SYSTEM_BASE = `당신은 딥테크(첨단기술) 정부지원사업 전문
 중소벤처기업부·창업진흥원·정보통신기획평가원(IITP) 등 정부 R&D 과제의 심사 기준(기술성·신규성·사업성·개발가능성)을 정확히 이해하고 있습니다.
 목표는 5억원 이상 규모의 딥테크 지원사업 서류를 통과시키는 것입니다.
 모든 서술은 한국어로, 심사위원을 설득하는 구체적·기술적·정량적 문장으로 작성합니다.
-과장된 형용사 대신 기술 용어(모델명·알고리즘·지표)와 논리적 근거를 사용합니다.`;
+과장된 형용사 대신 기술 용어(모델명·알고리즘·지표)와 논리적 근거를 사용합니다.
+
+${WINNING_PLAN_STYLE}`;
 
 async function callClaude<T>(
   system: string,
@@ -201,7 +207,11 @@ export async function generateIdeas(input: PlanningInput): Promise<DeepTechIdea[
     try {
       const system = `[작업] 사업 소개와 문제점(페인포인트)을 바탕으로, 정부 딥테크 R&D 과제로 제안 가능한 5개의 딥테크 아이디어를 도출하세요.
 각 아이디어는 (1) AI/첨단기술로 문제를 해결하고 (2) R&D 과제로서 기술 난이도·신규성이 있어야 합니다.
-각 아이디어가 어떤 문제(문제1, 문제2 ...)를 해결하는지 명시하세요.`;
+각 아이디어가 어떤 문제(문제1, 문제2 ...)를 해결하는지 명시하세요.
+5개 아이디어는 서로 다른 과업 유형(예: 인식/생성/예측/최적화/추천)을 다루도록 다양하게 구성하고,
+aiTech 에는 반드시 구체적인 모델명을 쓰세요.
+
+${modelSelectionGuide()}`;
       const user = `[사업 소개]\n${input.businessIntro}\n\n[해결하고 싶은 문제]\n${problemsBlock(input)}`;
       const out = await callClaude<{ ideas: DeepTechIdea[] }>(
         system,
@@ -233,7 +243,12 @@ const IDEAS_SCHEMA = {
         properties: {
           title: { type: "string", description: "아이디어 제목(개발 과제형, ~ 시스템/플랫폼 개발)" },
           summary: { type: "string", description: "2~3문장 설명. 기존 한계와 차별점 포함" },
-          aiTech: { type: "string", description: "핵심 AI 기술 (예: ASR/NLP/강화학습/CV)" },
+          aiTech: {
+            type: "string",
+            description:
+              "핵심 AI 기술 — 구체적인 모델명으로 쓸 것 (예: 'Whisper large-v3 + pyannote 화자분리', " +
+              "'HRNet-W48 키포인트 검출', 'LightGBM 이탈예측'). '딥러닝'·'NLP' 같은 뭉뚱그린 표현 금지.",
+          },
           novelty: { type: "string", description: "R&D 과제로서의 신규성·기술 난이도" },
           solvedProblems: { type: "array", items: { type: "string" } },
         },
@@ -257,9 +272,12 @@ export async function generateArchitecture(
     try {
       const system = `[작업] 선택된 딥테크 아이디어를 통합하는 시스템 아키텍처를 설계하세요.
 - 4계층(UI Layer, Service Layer, AI Engine Layer, Data Layer) 구조로 설명
-- 핵심 AI 엔진 모듈 4~6개를 정의(각 모듈: 역할, 적용 AI 모델, Input, Processing, Output, 학습·개발 방식)
+- 핵심 AI 엔진 모듈 4~6개를 정의(각 모듈: 역할, 적용 AI 모델, Input, Processing, Output,
+  학습·개발 방식, 정량 성능 목표, 모델 선정 근거)
 - 모듈 간 데이터 흐름을 서술
-- 계층별 기술 스택 제시`;
+- 계층별 기술 스택 제시(모델 서빙·최적화 방식 포함)
+
+${modelSelectionGuide()}`;
       const user = `[사업 소개]\n${input.businessIntro}\n\n[문제점]\n${problemsBlock(input)}\n\n[선택된 아이디어]\n${selected
         .map((i) => `- ${i.title}: ${i.summary}`)
         .join("\n")}`;
@@ -284,13 +302,31 @@ const MODULE_PROPS = {
   id: { type: "string", description: "모듈1, 모듈2 ..." },
   name: { type: "string" },
   role: { type: "string", description: "역할/정의" },
-  aiModels: { type: "string", description: "적용 AI 모델(콤마 구분)" },
+  aiModels: {
+    type: "string",
+    description:
+      "적용 AI 모델. 반드시 구체적인 모델명(예: HRNet-W48, BiRefNet, Whisper large-v3, LightGBM). " +
+      "'딥러닝'·'AI 모델' 같은 뭉뚱그린 표현 금지. 모듈마다 과업에 맞는 서로 다른 모델을 선택할 것.",
+  },
   input: { type: "string" },
   processing: { type: "string" },
   output: { type: "string" },
-  learningMethod: { type: "string", description: "학습·개발 방식" },
+  learningMethod: { type: "string", description: "학습·개발 방식(파인튜닝 기법·데이터 확보·검수 포함)" },
+  metrics: {
+    type: "string",
+    description:
+      "정량 성능 목표. 해당 과업의 표준 지표와 수치를 함께 제시(예: 'IoU 0.85 이상, 추론 p95 200ms 이하').",
+  },
+  rationale: {
+    type: "string",
+    description:
+      "모델 선정 근거. 검토한 대안 모델 1~2개를 명시하고 왜 그 대안이 아니라 이 모델을 선택했는지 " +
+      "데이터 특성·정확도·지연시간·비용 관점에서 설명.",
+  },
 };
-const MODULE_REQUIRED = ["id", "name", "role", "aiModels", "input", "processing", "output", "learningMethod"];
+const MODULE_REQUIRED = [
+  "id", "name", "role", "aiModels", "input", "processing", "output", "learningMethod", "metrics", "rationale",
+];
 
 const ARCH_SCHEMA = {
   type: "object" as const,
@@ -335,7 +371,11 @@ export async function generateDifferentiators(
     try {
       const system = `[작업] 아키텍처의 핵심 모듈을 근거로, 자사 고유의 차별화 알고리즘(핵심 IP) 3~5개를 도출하세요.
 각 항목은 (1) 알고리즘 명, (2) 무엇을 어떻게 하는지, (3) 왜 기존 기술과 다르고 특허 출원/권리화가 가능한지(근거)를 포함합니다.
-선정이력·특허가 없다면, 이 알고리즘들이 향후 특허 출원 대상이 됨을 강조하세요.`;
+선정이력·특허가 없다면, 이 알고리즘들이 향후 특허 출원 대상이 됨을 강조하세요.
+설명에는 어떤 오픈소스 모델 위에 어떤 자사 고유 로직을 결합했는지 구체 모델명과 함께 쓰고,
+가능하면 기존 기술 대비 정량적 우위(지표·수치)를 제시하세요.
+
+${modelSelectionGuide()}`;
       const user = `[시스템명]\n${arch.systemName}\n\n[핵심 모듈]\n${arch.modules
         .map((m) => `- ${m.name}: ${m.role} (AI: ${m.aiModels})`)
         .join("\n")}\n\n[선정이력·특허]\n${input.history || "없음"}`;
@@ -397,7 +437,11 @@ export async function generateDraft(
       const system = `[작업] 아래 정보를 모두 취합하여 정부 R&D 연구개발 기획 초안을 작성하세요.
 - projectTitle: 핵심 기술을 담은 연구개발 과제명 1개
 - necessity: 연구개발의 필요성 3개 항목(각 heading + body 3~5문장). 시장/구조적 문제 + 정량 근거
-- processModules: 연구개발 과정 프로세스를 모듈별로 정리(각 모듈: 정의(role), 적용 AI 모델, Input, Processing, Output, 학습·개발 방식). 대표/팀의 보유 데이터·경험을 학습데이터·검증에 활용하는 점을 반영`;
+- processModules: 연구개발 과정 프로세스를 모듈별로 정리(각 모듈: 정의(role), 적용 AI 모델, Input,
+  Processing, Output, 학습·개발 방식, 정량 성능 목표(metrics), 모델 선정 근거(rationale)).
+  대표/팀의 보유 데이터·경험을 학습데이터 확보·검수(Human-in-the-Loop)에 활용하는 점을 반영
+
+${modelSelectionGuide()}`;
       const user = `[시스템명] ${arch.systemName}\n[개요] ${arch.overview}\n\n[핵심 모듈]\n${arch.modules
         .map((m) => `- ${m.id} ${m.name}: ${m.role} / AI: ${m.aiModels} / 학습: ${m.learningMethod}`)
         .join("\n")}\n\n[차별화 알고리즘]\n${diffs
@@ -459,9 +503,14 @@ export async function generatePlan(
 - titleCandidates: 연구개발 과제명 후보 3개
 - necessity: 연구개발의 필요성 3개 항목(heading + body)
 - systemFlow: 운영 시스템 흐름(사용자 입력→모듈→출력) 서술
-- processDetail: 연구개발 프로세스 모듈별 상세(각 모듈 정의/Input/Processing/AI모델/학습방법/Output)
-- marketStrategy: 사업화·시장진입·수익모델 전략(3~5문장)
-- teamPlan: 추진 체계·팀 구성·역량(대표/팀 이력 반영, 3~5문장)`;
+- processDetail: 연구개발 프로세스 모듈별 상세(각 모듈 정의/Input/Processing/AI모델/학습방법/Output/
+  정량 성능 목표(metrics)/모델 선정 근거(rationale))
+- marketStrategy: 사업화·시장진입·수익모델 전략(3~5문장). 목표시장 규모와 연평균성장률을
+  가능하면 출처와 함께 제시하고, 초기 B2B 실증 → SaaS 구독 확장 단계로 서술
+- teamPlan: 추진 체계·팀 구성·역량. (대표자 총괄 역량) → (내부 개발 인력의 담당 기술) →
+  (외부 전문가 자문) 3단 구조로 쓰고, 보유 데이터·선행 경험을 학습데이터 확보와 연결
+
+${modelSelectionGuide()}`;
       const user = `[시스템명] ${arch.systemName}\n[개요] ${arch.overview}\n\n[모듈]\n${arch.modules
         .map((m) => `${m.id} ${m.name}: 역할=${m.role}; AI=${m.aiModels}; In=${m.input}; Proc=${m.processing}; Out=${m.output}; 학습=${m.learningMethod}`)
         .join("\n")}\n\n[과제명 초안] ${draft?.projectTitle || arch.systemName}\n[필요성]\n${(draft?.necessity || [])
@@ -538,6 +587,8 @@ function normalizeModule(m: Partial<ArchModule>, i = 0): ArchModule {
     processing: m.processing || "",
     output: m.output || "",
     learningMethod: m.learningMethod || "",
+    metrics: m.metrics || "",
+    rationale: m.rationale || "",
   };
 }
 
@@ -660,12 +711,14 @@ function domainWord(input: PlanningInput): string {
 function demoIdeas(input: PlanningInput): DeepTechIdea[] {
   const d = domainWord(input);
   const ps = input.problems.filter((p) => p.trim());
+  // 데모(키 미설정) 폴백도 과업 유형이 서로 다르도록 구성한다.
+  // 실제 생성은 Claude 가 aiModels.ts 카탈로그에서 도메인에 맞는 모델을 직접 고른다.
   const patterns = [
-    { t: "AI 기반 적응형 통합 코칭 플랫폼", tech: "Deep Knowledge Tracing, 강화학습(RL)", nov: "사용자 행동 데이터로 개인별 최적 경로를 실시간 산출하는 도메인 특화 최적화" },
-    { t: "신호·데이터 분석 AI 진단 시스템", tech: "신호처리 딥러닝(CNN/BiLSTM), 이상탐지", nov: "실패·오류 지점을 미세 단위까지 역추적하는 정밀 진단 알고리즘" },
-    { t: "AI 자동 분석·근인(Root Cause) 진단 시스템", tech: "NLP(BERT 파인튜닝), 다층 분류", nov: "표층·심층 원인을 2단계로 분류하고 처방까지 연결하는 폐쇄 루프" },
-    { t: "이탈 예측·행동 넛지 자동화 시스템", tech: "XGBoost/LSTM, Contextual Bandit", nov: "이탈 원인 유형 분류 후 강화학습으로 개입 전략을 자기 진화" },
-    { t: "LLM 기반 맞춤 튜터·생성 시스템", tech: "대규모 언어모델(LLM) 파인튜닝, RAG", nov: "도메인 특화 지식으로 실시간 맞춤 코칭·콘텐츠를 자동 생성" },
+    { t: "멀티모달 인식·자동 분석 시스템", tech: "ViT/DINOv2 백본, SAM2 세그멘테이션, RT-DETR 검출", nov: "원시 입력에서 구조적 특징을 자동 추출해 사람 판단 없이 정량 지표로 변환", met: "mAP 0.80 이상, IoU 0.85 이상" },
+    { t: "정밀 진단·이상탐지 시스템", tech: "PatchCore 이상탐지, Anomaly Transformer, LightGBM 보정", nov: "정상 분포에서의 미세 이탈을 조기 검출하고 원인 구간을 역추적", met: "Image AUROC 0.95 이상, 오탐률 5% 이하" },
+    { t: "근인(Root Cause) 분류·처방 시스템", tech: "KoELECTRA 분류, BGE-M3 임베딩 RAG, Reranker", nov: "표층·심층 원인을 2단계로 분류하고 근거 문서를 인용해 처방까지 연결", met: "Macro-F1 0.85 이상, 근거 인용률 90% 이상" },
+    { t: "수요·이탈 예측 및 개입 최적화 시스템", tech: "LightGBM/CatBoost, Temporal Fusion Transformer, Contextual Bandit(Thompson)", nov: "예측에 그치지 않고 개입 전략을 온라인 학습으로 자기 진화", met: "AUC 0.82 이상, 대조군 대비 개선 15% 이상" },
+    { t: "생성형 맞춤 콘텐츠·자동 산출물 시스템", tech: "LLM(Claude) + LoRA 파인튜닝, RAG, ControlNet 구조제어", nov: "도메인 지식을 반영한 산출물을 규격에 맞춰 자동 생성", met: "인간평가 승률 70% 이상, 환각률 3% 이하" },
   ];
   return patterns.map((p, i) => ({
     id: i + 1,
@@ -674,6 +727,7 @@ function demoIdeas(input: PlanningInput): DeepTechIdea[] {
     aiTech: p.tech,
     novelty: p.nov,
     solvedProblems: ps.length ? [ps[Math.min(i, ps.length - 1)].slice(0, 40)] : ["핵심 페인포인트"],
+    metrics: p.met,
   }));
 }
 
@@ -686,7 +740,9 @@ function demoArchitecture(input: PlanningInput, selected: DeepTechIdea[]): Archi
     input: "사용자/도메인 원시 데이터, 이전 모듈 산출물, 프로파일 정보",
     processing: "수집·정제 → 특징 추출 → 모델 추론 → 결과 태깅 및 리포트 생성",
     output: "정량 지표, 취약점/기회 분석, 다음 단계 처방 및 콘텐츠",
-    learningMethod: "보유 데이터로 사전학습 후 실사용 데이터로 온라인 파인튜닝(전문가 검수 Human-in-the-Loop)",
+    learningMethod: "공개 사전학습 가중치 위에 보유 데이터로 LoRA 파인튜닝 후 실사용 데이터로 온라인 학습(전문가 검수 Human-in-the-Loop)",
+    metrics: idea.metrics || "핵심 지표 목표치를 실증 단계에서 확정",
+    rationale: `${idea.aiTech}를 후보군과 비교한 결과, 본 도메인 데이터 특성과 실시간 처리 요구를 함께 만족하는 조합으로 선정`,
   }));
   if (!modules.length) {
     modules.push(...demoIdeas(input).slice(0, 4).map((idea, i) => ({
@@ -697,7 +753,9 @@ function demoArchitecture(input: PlanningInput, selected: DeepTechIdea[]): Archi
       input: "원시 데이터, 프로파일",
       processing: "전처리 → 추론 → 태깅",
       output: "지표·분석·처방",
-      learningMethod: "사전학습 후 온라인 파인튜닝",
+      learningMethod: "사전학습 가중치 위에 LoRA 파인튜닝 후 온라인 학습",
+      metrics: idea.metrics || "핵심 지표 목표치를 실증 단계에서 확정",
+      rationale: `${idea.aiTech} 조합을 후보군 대비 정확도·지연시간·운영비용 관점에서 선정`,
     })));
   }
   return {

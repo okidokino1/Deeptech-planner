@@ -42,7 +42,9 @@ function moduleBlock(m: ArchModule): string {
     label("Input", m.input) +
     label("Processing", m.processing) +
     label("학습·개발 방식", m.learningMethod) +
-    label("Output", m.output)
+    label("Output", m.output) +
+    (m.metrics ? label("정량 성능 목표", m.metrics) : "") +
+    (m.rationale ? label("모델 선정 근거", m.rationale) : "")
   );
 }
 

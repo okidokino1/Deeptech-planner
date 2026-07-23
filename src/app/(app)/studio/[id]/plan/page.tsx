@@ -29,6 +29,18 @@ function ModuleDetail({ m }: { m: ArchModule }) {
           </div>
         ))}
       </dl>
+      {m.metrics && (
+        <p className="mt-2 rounded-lg bg-emerald-50 p-2 text-xs text-emerald-800">
+          <span className="font-semibold">정량 목표: </span>
+          {m.metrics}
+        </p>
+      )}
+      {m.rationale && (
+        <p className="mt-1.5 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
+          <span className="font-semibold">모델 선정 근거: </span>
+          {m.rationale}
+        </p>
+      )}
     </div>
   );
 }
