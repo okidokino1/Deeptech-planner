@@ -127,10 +127,12 @@ async function callClaude<T>(
   userPrompt: string,
   toolName: string,
   schema: Record<string, unknown>,
-  maxTokens = 4000
+  maxTokens = 8000
 ): Promise<T> {
   const client = new Anthropic({ apiKey: env.anthropicKey });
-  const resp = await client.messages.create({
+  // 한국어 계획서는 출력 토큰 소모가 커서 max_tokens 를 넉넉히 잡는다.
+  // 큰 max_tokens 로 비스트리밍 요청을 보내면 HTTP 타임아웃 위험이 있으므로 스트리밍으로 받는다.
+  const stream = client.messages.stream({
     model: env.claudeModel,
     max_tokens: maxTokens,
     system: `${SYSTEM_BASE}\n\n${system}`,
@@ -138,10 +140,21 @@ async function callClaude<T>(
     tool_choice: { type: "tool", name: toolName },
     messages: [{ role: "user", content: userPrompt }],
   });
+  const resp = await stream.finalMessage();
+
+  // 출력이 잘리면 tool_use JSON 이 불완전해져 뒤쪽 필드가 통째로 사라진다.
+  // 조용히 데모로 폴백하지 않도록 반드시 로그로 남긴다.
+  if (resp.stop_reason === "max_tokens") {
+    console.error(
+      `[planning] ${toolName}: max_tokens(${maxTokens}) 도달 — 출력이 잘렸습니다. ` +
+        `출력 토큰=${resp.usage?.output_tokens}`
+    );
+  }
+
   const tu = resp.content.find(
     (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
   );
-  if (!tu) throw new Error("no tool_use");
+  if (!tu) throw new Error(`no tool_use (stop_reason=${resp.stop_reason})`);
   return tu.input as T;
 }
 
@@ -255,7 +268,7 @@ export async function generateArchitecture(
         user,
         "submit_architecture",
         ARCH_SCHEMA,
-        5000
+        12000
       );
       const arch = normalizeArch(out);
       if (arch.modules.length) return arch;
@@ -390,7 +403,7 @@ export async function generateDraft(
         .join("\n")}\n\n[차별화 알고리즘]\n${diffs
         .map((d) => `- ${d.title}: ${d.description}`)
         .join("\n")}\n\n[대표자 이력]\n${input.founder}\n\n[팀원]\n${input.team}\n\n[문제점]\n${problemsBlock(input)}`;
-      const out = await callClaude<RnDDraft>(system, user, "submit_draft", DRAFT_SCHEMA, 5000);
+      const out = await callClaude<RnDDraft>(system, user, "submit_draft", DRAFT_SCHEMA, 12000);
       const necessity = asArray<NecessitySection>(out?.necessity).filter((n) => n?.heading || n?.body);
       const processModules = asArray<Partial<ArchModule>>(out?.processModules).map(normalizeModule);
       if (out?.projectTitle && necessity.length) {
@@ -444,7 +457,6 @@ export async function generatePlan(
     try {
       const system = `[작업] 아래 기술기획 산출물을 정부 딥테크 R&D 사업계획서 양식으로 완성하세요. 반드시 다음을 포함:
 - titleCandidates: 연구개발 과제명 후보 3개
-- summaryTable: 모듈별 요약표(각 모듈의 정의/AI모델/Input/Processing/Output/학습방법)
 - necessity: 연구개발의 필요성 3개 항목(heading + body)
 - systemFlow: 운영 시스템 흐름(사용자 입력→모듈→출력) 서술
 - processDetail: 연구개발 프로세스 모듈별 상세(각 모듈 정의/Input/Processing/AI모델/학습방법/Output)
@@ -455,11 +467,12 @@ export async function generatePlan(
         .join("\n")}\n\n[과제명 초안] ${draft?.projectTitle || arch.systemName}\n[필요성]\n${(draft?.necessity || [])
         .map((n) => `- ${n.heading}: ${n.body}`)
         .join("\n")}\n\n[대표] ${input.founder}\n[팀] ${input.team}`;
-      const out = await callClaude<BusinessPlan>(system, user, "submit_plan", PLAN_SCHEMA, 6000);
+      const out = await callClaude<BusinessPlan>(system, user, "submit_plan", PLAN_SCHEMA, 14000);
       const titleCandidates = asArray<string>(out?.titleCandidates).filter(Boolean);
       const necessity = asArray<NecessitySection>(out?.necessity).filter((n) => n?.heading || n?.body);
-      const summaryTable = asArray<Partial<ArchModule>>(out?.summaryTable).map(normalizeModule);
       const processDetail = asArray<Partial<ArchModule>>(out?.processDetail).map(normalizeModule);
+      // 요약표는 모듈 상세와 동일한 데이터이므로 중복 생성 대신 파생시킨다(출력 토큰 절반 절감).
+      const summaryTable = processDetail;
       if (titleCandidates.length && necessity.length) {
         return {
           titleCandidates,
@@ -480,14 +493,12 @@ export async function generatePlan(
   return demoPlan(input, artifacts);
 }
 
+// summaryTable 은 processDetail 과 동일한 모듈 데이터라 중복 생성하지 않는다.
+// (한국어 모듈 표를 두 번 출력하면 출력 토큰이 두 배가 되어 JSON 이 잘린다 → 코드에서 파생)
 const PLAN_SCHEMA = {
   type: "object" as const,
   properties: {
     titleCandidates: { type: "array", items: { type: "string" }, minItems: 3 },
-    summaryTable: {
-      type: "array",
-      items: { type: "object", properties: MODULE_PROPS, required: MODULE_REQUIRED },
-    },
     necessity: {
       type: "array",
       items: {
@@ -504,7 +515,7 @@ const PLAN_SCHEMA = {
     marketStrategy: { type: "string" },
     teamPlan: { type: "string" },
   },
-  required: ["titleCandidates", "summaryTable", "necessity", "systemFlow", "processDetail", "marketStrategy", "teamPlan"],
+  required: ["titleCandidates", "necessity", "systemFlow", "processDetail", "marketStrategy", "teamPlan"],
 };
 
 // ---------------------------------------------------------------------------
