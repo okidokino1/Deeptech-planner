@@ -80,7 +80,9 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
       {/* 표지 */}
       <div className="card p-8 text-center">
         <span className="chip mx-auto bg-brand-100 text-brand-700">딥테크 정부지원사업 연구개발계획서</span>
-        <h1 className="mt-3 text-2xl font-bold text-slate-900">{plan.titleCandidates[0]}</h1>
+        <h1 className="mt-3 text-2xl font-bold text-slate-900">
+          {plan.titleCandidates?.[0] || project.title}
+        </h1>
         {plan.engine === "demo" && (
           <p className="mt-2 text-xs text-amber-600">
             데모 생성 결과입니다. ANTHROPIC_API_KEY 연결 시 Claude 정밀 작성이 제공됩니다.
@@ -127,7 +129,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
       <section className="card p-6">
         <h2 className="text-lg font-bold text-slate-900">1. 연구개발 과제명(후보)</h2>
         <ol className="mt-3 space-y-2">
-          {plan.titleCandidates.map((t, i) => (
+          {(plan.titleCandidates || []).map((t, i) => (
             <li key={i} className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
               <span className="font-semibold text-slate-500">후보 {i + 1}. </span>
               {t}
@@ -140,7 +142,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
       <section className="card p-6">
         <h2 className="text-lg font-bold text-slate-900">2. 연구개발의 필요성</h2>
         <div className="mt-3 space-y-3">
-          {plan.necessity.map((n, i) => (
+          {(plan.necessity || []).map((n, i) => (
             <div key={i}>
               <p className="font-semibold text-slate-800">
                 2-{i + 1}. {n.heading}
@@ -161,7 +163,7 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
       <section className="card p-6">
         <h2 className="text-lg font-bold text-slate-900">4. 연구개발 프로세스</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
-          {plan.processDetail.map((m) => (
+          {(plan.processDetail || []).map((m) => (
             <ModuleDetail key={m.id} m={m} />
           ))}
         </div>

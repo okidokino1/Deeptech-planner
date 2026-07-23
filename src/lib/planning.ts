@@ -543,6 +543,86 @@ function normalizeArch(a: Architecture): Architecture {
   };
 }
 
+function normalizeIdea(it: Partial<DeepTechIdea>, i: number): DeepTechIdea {
+  return {
+    id: typeof it?.id === "number" ? it.id : i + 1,
+    title: it?.title || `아이디어 ${i + 1}`,
+    summary: it?.summary || "",
+    aiTech: it?.aiTech || "",
+    novelty: it?.novelty || "",
+    solvedProblems: asArray<string>(it?.solvedProblems).filter((s) => typeof s === "string"),
+  };
+}
+
+function normalizeDiff(d: Partial<Differentiator>, i: number): Differentiator {
+  return {
+    id: i + 1,
+    title: d?.title || `차별화 알고리즘 ${i + 1}`,
+    description: d?.description || "",
+    rationale: d?.rationale || "",
+  };
+}
+
+function normalizeNecessity(v: unknown): NecessitySection[] {
+  return asArray<NecessitySection>(v)
+    .filter((n) => n?.heading || n?.body)
+    .map((n) => ({ heading: n.heading || "", body: n.body || "" }));
+}
+
+function normalizeDraft(d: Partial<RnDDraft>): RnDDraft {
+  return {
+    projectTitle: d?.projectTitle || "",
+    necessity: normalizeNecessity(d?.necessity),
+    processModules: asArray<Partial<ArchModule>>(d?.processModules).map(normalizeModule),
+  };
+}
+
+// 계획서를 화면·내보내기가 안전하게 쓸 수 있는 형태로 보정한다.
+// titleCandidates[0]을 직접 참조하는 화면이 있으므로 절대 빈 배열이 되지 않게 보장한다.
+export function normalizePlan(
+  p: Partial<BusinessPlan> | undefined | null,
+  fallbackTitle = "연구개발 과제"
+): BusinessPlan {
+  const titleCandidates = asArray<string>(p?.titleCandidates).filter(
+    (t) => typeof t === "string" && t.trim()
+  );
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    titleCandidates: titleCandidates.length ? titleCandidates : [fallbackTitle],
+    summaryTable: asArray<Partial<ArchModule>>(p?.summaryTable).map(normalizeModule),
+    necessity: normalizeNecessity(p?.necessity),
+    systemFlow: str(p?.systemFlow),
+    processDetail: asArray<Partial<ArchModule>>(p?.processDetail).map(normalizeModule),
+    marketStrategy: str(p?.marketStrategy),
+    teamPlan: str(p?.teamPlan),
+    engine: p?.engine === "claude" ? "claude" : "demo",
+  };
+}
+
+// 저장소에서 읽어온 산출물을 정화한다.
+// 과거 버전이 배열 필드를 깨진 형태(문자열/undefined)로 저장한 기록이 있어,
+// 읽는 지점에서 한 번 보정해야 계획서 화면이 500으로 죽지 않는다.
+export function sanitizeArtifacts(
+  a: PlanningArtifacts | undefined | null,
+  fallbackTitle?: string
+): PlanningArtifacts {
+  if (!a || typeof a !== "object") return {};
+  const out: PlanningArtifacts = {};
+
+  const ideas = asArray<Partial<DeepTechIdea>>(a.ideas).map(normalizeIdea);
+  if (ideas.length) out.ideas = ideas;
+
+  if (a.architecture) out.architecture = normalizeArch(a.architecture);
+
+  const diffs = asArray<Partial<Differentiator>>(a.differentiators).map(normalizeDiff);
+  if (diffs.length) out.differentiators = diffs;
+
+  if (a.draft) out.draft = normalizeDraft(a.draft);
+  if (a.plan) out.plan = normalizePlan(a.plan, fallbackTitle);
+
+  return out;
+}
+
 const DEFAULT_LAYERS = [
   { name: "UI Layer (사용자 인터페이스)", description: "웹/모바일 대시보드, 입력·결과 화면, 알림" },
   { name: "Service Layer (서비스 제공)", description: "API 서버, 콘텐츠·리포트 제공, 비동기 처리" },

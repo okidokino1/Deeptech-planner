@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import { features } from "./env";
 import { getSupabaseServer } from "./supabase/server";
 import type { PlanningInput, PlanningArtifacts, BusinessPlan } from "./planning";
-import { EMPTY_INPUT } from "./planning";
+import { EMPTY_INPUT, sanitizeArtifacts } from "./planning";
 
 export interface RehearsalRecord {
   id: string;
@@ -47,6 +47,11 @@ function newProject(userId: string, title?: string): PlanningProject {
   };
 }
 
+// 저장된 산출물이 깨져 있어도 화면이 죽지 않도록, 읽어서 내보내기 직전에 정화한다.
+function safe(p: PlanningProject): PlanningProject {
+  return { ...p, artifacts: sanitizeArtifacts(p.artifacts, p.title) };
+}
+
 // --- 공개 API ----------------------------------------------------------------
 
 export async function listProjects(userId: string): Promise<PlanningProject[]> {
@@ -57,11 +62,11 @@ export async function listProjects(userId: string): Promise<PlanningProject[]> {
       .select("*")
       .eq("user_id", userId)
       .order("updated_at", { ascending: false });
-    return (data || []).map(mapRow);
+    return (data || []).map((r) => safe(mapRow(r)));
   }
-  return [...(demoStore.get(userId) || [])].sort(
-    (a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt)
-  );
+  return [...(demoStore.get(userId) || [])]
+    .sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt))
+    .map(safe);
 }
 
 export async function getProject(userId: string, id: string): Promise<PlanningProject | null> {
@@ -73,9 +78,10 @@ export async function getProject(userId: string, id: string): Promise<PlanningPr
       .eq("user_id", userId)
       .eq("id", id)
       .single();
-    return data ? mapRow(data) : null;
+    return data ? safe(mapRow(data)) : null;
   }
-  return (demoStore.get(userId) || []).find((p) => p.id === id) || null;
+  const found = (demoStore.get(userId) || []).find((p) => p.id === id);
+  return found ? safe(found) : null;
 }
 
 export async function createProject(userId: string, title?: string): Promise<PlanningProject> {
