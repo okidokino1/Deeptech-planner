@@ -226,9 +226,82 @@ export interface MemberProject {
   updatedAt: string;
 }
 
+export interface CreditLogRow {
+  delta: number;
+  before: number;
+  after: number;
+  reason: string | null;
+  actorEmail: string | null;
+  createdAt: string | null;
+}
+
 export interface MemberDetail extends MemberRow {
   projects: MemberProject[];
   payments: { amount: number; provider: string | null; paidAt: string | null }[];
+  creditLogs: CreditLogRow[];
+}
+
+// 이용권 수동 조정 (지급/차감). 절대값 입력이 아니라 증감(delta)으로 처리해
+// 동시 차감과 충돌해도 잔여가 어긋나지 않게 한다. 조정 내역은 항상 기록한다.
+export async function adjustCredits(
+  viewer: Viewer,
+  userId: string,
+  delta: number,
+  reason: string,
+  actor: { id: string; email: string }
+): Promise<{ ok: boolean; credits?: number; error?: string }> {
+  if (!hasAdmin()) return { ok: false, error: "관리자 설정(service_role)이 필요합니다." };
+  if (!Number.isInteger(delta) || delta === 0) return { ok: false, error: "증감량은 0이 아닌 정수여야 합니다." };
+  if (Math.abs(delta) > 1000) return { ok: false, error: "한 번에 1000회를 초과해 조정할 수 없습니다." };
+
+  // 뷰어 범위 밖(다른 기관 회원)이면 접근 불가
+  const members = await listMembers(viewer);
+  const target = members.find((m) => m.id === userId);
+  if (!target) return { ok: false, error: "대상 회원을 찾을 수 없습니다." };
+
+  const sb = getSupabaseAdmin();
+  // 잔여는 항상 DB 최신값 기준으로 계산 (목록 캐시값을 신뢰하지 않는다)
+  const { data: cur } = await sb.from("profiles").select("credits").eq("id", userId).single();
+  const before = ((cur as Row | null)?.credits as number) ?? 0;
+  const after = Math.max(0, before + delta);
+
+  const { error } = await sb.from("profiles").update({ credits: after }).eq("id", userId);
+  if (error) return { ok: false, error: "이용권 반영에 실패했습니다." };
+
+  // 이력 기록 실패가 조정 자체를 되돌리진 않지만, 반드시 로그로 남긴다.
+  const { error: logErr } = await sb.from("credit_adjustments").insert({
+    user_id: userId,
+    delta: after - before,
+    before_credits: before,
+    after_credits: after,
+    reason: reason?.trim() || null,
+    actor_id: actor.id,
+    actor_email: actor.email,
+  });
+  if (logErr) {
+    console.error("[crm] 이용권 조정 이력 기록 실패 (credit-adjustments.sql 실행 필요):", logErr.message);
+  }
+
+  return { ok: true, credits: after };
+}
+
+async function listCreditLogs(userId: string): Promise<CreditLogRow[]> {
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .from("credit_adjustments")
+    .select("delta,before_credits,after_credits,reason,actor_email,created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) return []; // 테이블 미생성 시에도 화면이 죽지 않게 한다
+  return ((data || []) as Row[]).map((r) => ({
+    delta: (r.delta as number) || 0,
+    before: (r.before_credits as number) || 0,
+    after: (r.after_credits as number) || 0,
+    reason: (r.reason as string) || null,
+    actorEmail: (r.actor_email as string) || null,
+    createdAt: (r.created_at as string) || null,
+  }));
 }
 
 export async function getMember(viewer: Viewer, id: string): Promise<MemberDetail | null> {
@@ -264,14 +337,15 @@ export async function getMember(viewer: Viewer, id: string): Promise<MemberDetai
       provider: (p.provider as string) || null,
       paidAt: (p.paid_at as string) || null,
     })),
+    creditLogs: await listCreditLogs(id),
   };
 }
 
 // ---- 회원 수정 ----
+// 이용권(credits)은 여기서 다루지 않는다 — 이력이 남는 adjustCredits() 만 사용한다.
 export interface MemberPatch {
   name?: string;
   plan?: "free" | "pro";
-  credits?: number;
   status?: string;
   memo?: string;
   tags?: string[];
@@ -289,7 +363,6 @@ export async function updateMember(viewer: Viewer, id: string, patch: MemberPatc
   const u: Record<string, unknown> = {};
   if (patch.name !== undefined) u.name = patch.name;
   if (patch.plan !== undefined) u.plan = patch.plan;
-  if (patch.credits !== undefined) u.credits = patch.credits;
   if (patch.status !== undefined) u.status = patch.status;
   if (patch.memo !== undefined) u.memo = patch.memo;
   if (patch.tags !== undefined) u.tags = patch.tags;

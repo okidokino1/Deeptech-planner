@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import {
   updateMember,
+  adjustCredits,
   createOrganization,
   updateOrganization,
   setOrgAdmin,
@@ -24,6 +25,17 @@ export async function POST(req: Request) {
       case "updateMember": {
         const ok = await updateMember(viewer, body.id, body.patch || {});
         return NextResponse.json({ ok });
+      }
+      case "adjustCredits": {
+        // 이용권 지급/차감 — 조정 이력이 남는 유일한 경로
+        const r = await adjustCredits(
+          viewer,
+          body.id,
+          Number(body.delta),
+          String(body.reason || ""),
+          { id: user.id, email: user.email }
+        );
+        return NextResponse.json(r, { status: r.ok ? 200 : 400 });
       }
       case "createOrg": {
         const id = await createOrganization(viewer, {

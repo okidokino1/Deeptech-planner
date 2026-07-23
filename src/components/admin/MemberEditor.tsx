@@ -17,7 +17,6 @@ export function MemberEditor({
   const router = useRouter();
   const [name, setName] = useState(member.name);
   const [plan, setPlan] = useState(member.plan);
-  const [credits, setCredits] = useState(member.credits);
   const [status, setStatus] = useState(member.status);
   const [tags, setTags] = useState(member.tags.join(", "));
   const [memo, setMemo] = useState(member.memo || "");
@@ -33,7 +32,6 @@ export function MemberEditor({
       const patch: Record<string, unknown> = {
         name,
         plan,
-        credits: Number(credits),
         status,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
         memo,
@@ -83,7 +81,9 @@ export function MemberEditor({
         </div>
         <div>
           <label className="label">이용권 (회)</label>
-          <input type="number" className="input" value={credits} onChange={(e) => setCredits(Number(e.target.value))} />
+          <p className="input flex items-center bg-slate-50 text-slate-500">
+            {member.credits}회 — 위 &lsquo;이용권 조정&rsquo;에서 변경
+          </p>
         </div>
         <div className="sm:col-span-2">
           <label className="label">태그 (쉼표로 구분)</label>

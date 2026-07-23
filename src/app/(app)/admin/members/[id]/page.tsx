@@ -4,6 +4,7 @@ import { ArrowLeft, FileCheck2, Circle } from "lucide-react";
 import { getSessionUser } from "@/lib/auth";
 import { getMember, listOrganizations } from "@/lib/crm";
 import { MemberEditor } from "@/components/admin/MemberEditor";
+import { CreditAdjuster } from "@/components/admin/CreditAdjuster";
 import { formatDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -91,6 +92,14 @@ export default async function MemberDetailPage({
           </div>
         </dl>
       </div>
+
+      {/* 이용권 조정 */}
+      <CreditAdjuster
+        memberId={member.id}
+        credits={member.credits}
+        plan={member.plan}
+        logs={member.creditLogs}
+      />
 
       {/* 편집 */}
       <MemberEditor member={member} orgs={orgs.map((o) => ({ id: o.id, name: o.name }))} isPlatform={!!user.isAdmin} />
