@@ -145,6 +145,35 @@ async function callClaude<T>(
   return tu.input as T;
 }
 
+// Claude 도구호출(tool_use)이 배열 필드를 배열이 아닌 형태로 돌려주는 경우가 있다.
+//   - JSON 문자열:  { "ideas": "[{...},{...}]" }
+//   - 객체 맵:      { "ideas": { "0": {...}, "1": {...} } }
+//   - 단일 객체:    { "ideas": {...} }
+// 어떤 형태로 와도 배열로 복원한다. (복원 실패 시에만 데모로 폴백)
+function asArray<T>(v: unknown): T[] {
+  if (Array.isArray(v)) return v as T[];
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return [];
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed as T[];
+      if (parsed && typeof parsed === "object") return [parsed as T];
+    } catch {
+      /* 파싱 불가 → 빈 배열 */
+    }
+    return [];
+  }
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o);
+    // { "0": {...}, "1": {...} } 형태만 값 배열로 펼친다
+    if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) return Object.values(o) as T[];
+    return [o as T];
+  }
+  return [];
+}
+
 function problemsBlock(input: PlanningInput): string {
   const ps = input.problems.filter((p) => p.trim());
   return ps.map((p, i) => `문제${i + 1}. ${p}`).join("\n");
@@ -167,7 +196,11 @@ export async function generateIdeas(input: PlanningInput): Promise<DeepTechIdea[
         "submit_ideas",
         IDEAS_SCHEMA
       );
-      return (out.ideas || []).slice(0, 5).map((it, i) => ({ ...it, id: i + 1 }));
+      const ideas = asArray<DeepTechIdea>(out?.ideas)
+        .slice(0, 5)
+        .map((it, i) => ({ ...it, id: i + 1, solvedProblems: asArray<string>(it?.solvedProblems) }));
+      if (ideas.length) return ideas;
+      console.error("[planning] generateIdeas: 결과가 비어 있어 데모 대체");
     } catch (e) {
       console.error("[planning] generateIdeas Claude 실패, 데모 대체:", e);
     }
@@ -224,7 +257,9 @@ export async function generateArchitecture(
         ARCH_SCHEMA,
         5000
       );
-      return normalizeArch(out);
+      const arch = normalizeArch(out);
+      if (arch.modules.length) return arch;
+      console.error("[planning] generateArchitecture: 모듈이 비어 있어 데모 대체");
     } catch (e) {
       console.error("[planning] generateArchitecture Claude 실패, 데모 대체:", e);
     }
@@ -297,7 +332,16 @@ export async function generateDifferentiators(
         "submit_diff",
         DIFF_SCHEMA
       );
-      return (out.differentiators || []).map((d, i) => ({ ...d, id: i + 1 }));
+      const diffs = asArray<Differentiator>(out?.differentiators)
+        .filter((d) => d && (d.title || d.description))
+        .map((d, i) => ({
+          id: i + 1,
+          title: d.title || `차별화 알고리즘 ${i + 1}`,
+          description: d.description || "",
+          rationale: d.rationale || "",
+        }));
+      if (diffs.length) return diffs;
+      console.error("[planning] generateDifferentiators: 결과가 비어 있어 데모 대체");
     } catch (e) {
       console.error("[planning] generateDifferentiators Claude 실패, 데모 대체:", e);
     }
@@ -347,7 +391,16 @@ export async function generateDraft(
         .map((d) => `- ${d.title}: ${d.description}`)
         .join("\n")}\n\n[대표자 이력]\n${input.founder}\n\n[팀원]\n${input.team}\n\n[문제점]\n${problemsBlock(input)}`;
       const out = await callClaude<RnDDraft>(system, user, "submit_draft", DRAFT_SCHEMA, 5000);
-      return { ...out, processModules: (out.processModules || []).map(normalizeModule) };
+      const necessity = asArray<NecessitySection>(out?.necessity).filter((n) => n?.heading || n?.body);
+      const processModules = asArray<Partial<ArchModule>>(out?.processModules).map(normalizeModule);
+      if (out?.projectTitle && necessity.length) {
+        return {
+          projectTitle: out.projectTitle,
+          necessity,
+          processModules: processModules.length ? processModules : arch.modules,
+        };
+      }
+      console.error("[planning] generateDraft: 결과가 비어 있어 데모 대체");
     } catch (e) {
       console.error("[planning] generateDraft Claude 실패, 데모 대체:", e);
     }
@@ -403,12 +456,23 @@ export async function generatePlan(
         .map((n) => `- ${n.heading}: ${n.body}`)
         .join("\n")}\n\n[대표] ${input.founder}\n[팀] ${input.team}`;
       const out = await callClaude<BusinessPlan>(system, user, "submit_plan", PLAN_SCHEMA, 6000);
-      return {
-        ...out,
-        summaryTable: (out.summaryTable || []).map(normalizeModule),
-        processDetail: (out.processDetail || []).map(normalizeModule),
-        engine: "claude",
-      };
+      const titleCandidates = asArray<string>(out?.titleCandidates).filter(Boolean);
+      const necessity = asArray<NecessitySection>(out?.necessity).filter((n) => n?.heading || n?.body);
+      const summaryTable = asArray<Partial<ArchModule>>(out?.summaryTable).map(normalizeModule);
+      const processDetail = asArray<Partial<ArchModule>>(out?.processDetail).map(normalizeModule);
+      if (titleCandidates.length && necessity.length) {
+        return {
+          titleCandidates,
+          summaryTable: summaryTable.length ? summaryTable : arch.modules,
+          necessity,
+          systemFlow: out?.systemFlow || "",
+          processDetail: processDetail.length ? processDetail : arch.modules,
+          marketStrategy: out?.marketStrategy || "",
+          teamPlan: out?.teamPlan || "",
+          engine: "claude",
+        };
+      }
+      console.error("[planning] generatePlan: 결과가 비어 있어 데모 대체");
     } catch (e) {
       console.error("[planning] generatePlan Claude 실패, 데모 대체:", e);
     }
@@ -467,15 +531,15 @@ function normalizeModule(m: Partial<ArchModule>, i = 0): ArchModule {
 }
 
 function normalizeArch(a: Architecture): Architecture {
+  const layers = asArray<{ name: string; description: string }>(a?.layers).filter((l) => l?.name);
+  const techStack = asArray<{ layer: string; tech: string }>(a?.techStack).filter((s) => s?.layer || s?.tech);
   return {
-    systemName: a.systemName || "통합 AI 플랫폼",
-    overview: a.overview || "",
-    layers: a.layers?.length
-      ? a.layers
-      : DEFAULT_LAYERS,
-    modules: (a.modules || []).map((m, i) => normalizeModule(m, i)),
-    dataFlow: a.dataFlow || "",
-    techStack: a.techStack?.length ? a.techStack : DEFAULT_STACK,
+    systemName: a?.systemName || "통합 AI 플랫폼",
+    overview: a?.overview || "",
+    layers: layers.length ? layers : DEFAULT_LAYERS,
+    modules: asArray<Partial<ArchModule>>(a?.modules).map((m, i) => normalizeModule(m, i)),
+    dataFlow: a?.dataFlow || "",
+    techStack: techStack.length ? techStack : DEFAULT_STACK,
   };
 }
 
@@ -558,7 +622,20 @@ function demoArchitecture(input: PlanningInput, selected: DeepTechIdea[]): Archi
 }
 
 function demoDifferentiators(arch: Architecture): Differentiator[] {
-  return arch.modules.slice(0, 4).map((m, i) => ({
+  // 아키텍처 모듈이 비어 있어도 절대 빈 배열을 돌려주지 않는다(화면이 멈춘 것처럼 보임 방지).
+  const base: ArchModule[] = arch?.modules?.length
+    ? arch.modules
+    : ["데이터 분석", "정밀 진단", "맞춤 처방"].map((n, i) => ({
+        id: `모듈${i + 1}`,
+        name: `${n} 엔진`,
+        role: `${arch?.systemName || "본 시스템"}의 ${n}을 담당하는 핵심 AI 모듈이다.`,
+        aiModels: "딥러닝(CNN/LSTM), NLP, 강화학습",
+        input: "원시 데이터, 프로파일",
+        processing: "전처리 → 추론 → 태깅",
+        output: "지표·분석·처방",
+        learningMethod: "사전학습 후 온라인 파인튜닝",
+      }));
+  return base.slice(0, 4).map((m, i) => ({
     id: i + 1,
     title: `${m.name.replace(/ 엔진$/, "")} 특화 알고리즘`,
     description: `${m.role} 이를 위해 ${m.aiModels}를 결합하여, 일반 솔루션이 제공하지 못하는 정밀 분석·처방을 자동 수행하는 자사 고유 알고리즘이다.`,
