@@ -18,6 +18,15 @@ export interface RehearsalInput {
   planSummary?: string; // 사업계획서 핵심 요약(맥락)
   targetSec?: number; // 목표 발표 시간(초). 기본 없음
   question?: string; // 특정 예상질문에 대한 답변 연습이면 지정
+  announcement?: string; // 정부지원사업 공고문(심사 관점 반영용)
+}
+
+// 공고문은 수십 페이지일 수 있어 프롬프트 토큰이 폭증한다.
+// 심사 예상질문 생성에는 앞부분(사업목적·지원자격·평가지표·지원규모)만으로 충분하므로 상한을 둔다.
+const ANNOUNCEMENT_MAX = 8000;
+export function trimAnnouncement(s?: string): string {
+  const t = (s || "").trim();
+  return t.length > ANNOUNCEMENT_MAX ? t.slice(0, ANNOUNCEMENT_MAX) : t;
 }
 
 export type RehearsalDimKey =
@@ -89,9 +98,11 @@ async function scoreWithClaude(
 또한 심사위원이 실제로 물어볼 법한 예리한 예상 질문 4~6개와 모범 답변 방향을 제시합니다.
 모든 서술은 한국어. 코멘트는 구체적 개선점을 담습니다. 반드시 submit_rehearsal 도구를 호출하세요.`;
 
+  const ann = trimAnnouncement(input.announcement);
   const ctx = [
     input.projectTitle ? `[발표 과제] ${input.projectTitle}` : "",
     input.planSummary ? `[사업계획 요약] ${input.planSummary}` : "",
+    ann ? `[정부지원사업 공고문]\n${ann}\n\n※ 위 공고문의 평가지표·지원목적·심사 관점을 반영해 예상 질문을 뽑을 것.` : "",
     input.question ? `[답변 대상 예상질문] ${input.question}` : "",
     input.targetSec ? `[목표 발표시간] ${input.targetSec}초` : "",
     `[음성 지표] ${metricsSummary(metrics)}`,
@@ -125,7 +136,7 @@ async function scoreWithClaude(
     summary: (p.summary as string) || "",
     strengths: (p.strengths as string[]) || [],
     improvements: (p.improvements as string[]) || [],
-    anticipatedQuestions: (p.anticipatedQuestions as AnticipatedQA[]) || [],
+    anticipatedQuestions: normalizeQuestions(p.anticipatedQuestions),
     engine: "claude",
   };
 }
@@ -163,6 +174,104 @@ const REHEARSAL_SCHEMA = {
   },
   required: ["dimensions", "overall", "summary", "strengths", "improvements", "anticipatedQuestions"],
 };
+
+// ---------------------------------------------------------------------------
+// 발표 전 · 공고문 + 사업계획서 기반 예상 질문 생성 (녹음 없이 독립 실행)
+// ---------------------------------------------------------------------------
+export interface QuestionsInput {
+  projectTitle?: string;
+  planSummary?: string; // 사업계획서 상세 맥락
+  announcement?: string; // 정부지원사업 공고문
+}
+
+export async function generateAnticipatedQuestions(
+  input: QuestionsInput
+): Promise<{ questions: AnticipatedQA[]; engine: "claude" | "demo" }> {
+  if (features.claude) {
+    try {
+      const client = new Anthropic({ apiKey: env.anthropicKey });
+      const ann = trimAnnouncement(input.announcement);
+      const system = `당신은 정부 R&D·창업 지원사업(딥테크) 대면 발표의 심사위원입니다.
+지원자의 사업계획서와 해당 사업의 공고문을 근거로, 실제 심사 현장에서 나올 법한
+날카로운 예상 질문 6~8개와 각 질문에 대한 모범 답변 방향을 제시합니다.
+- 공고문이 있으면 그 사업의 평가지표·지원목적·심사기준을 정확히 반영하세요.
+  (예: 공고가 '사업화 성공 가능성'을 크게 본다면 매출·고객 검증 질문을, '기술 혁신성'을
+   본다면 신규성·특허 질문을 우선 배치)
+- 기술 타당성, 차별성, 시장성, 팀 역량, 예산·일정 리스크를 고르게 다루세요.
+- 두루뭉술한 질문이 아니라, 계획서의 구체적 약점을 파고드는 질문을 만드세요.
+모든 서술은 한국어. 반드시 submit_questions 도구를 호출하세요.`;
+      const ctx = [
+        input.projectTitle ? `[과제명] ${input.projectTitle}` : "",
+        input.planSummary ? `[사업계획서 요약]\n${input.planSummary}` : "",
+        ann ? `[정부지원사업 공고문]\n${ann}` : "[공고문] (제출되지 않음 — 일반적인 심사 관점으로 질문 생성)",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const resp = await client.messages.create({
+        model: env.claudeModel,
+        max_tokens: 3000,
+        system,
+        tools: [{ name: "submit_questions", description: "예상 질문 목록 제출", input_schema: QUESTIONS_SCHEMA }],
+        tool_choice: { type: "tool", name: "submit_questions" },
+        messages: [{ role: "user", content: ctx }],
+      });
+      const tu = resp.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      if (!tu) throw new Error("no tool_use");
+      const raw = (tu.input as { questions?: unknown })?.questions;
+      const questions = normalizeQuestions(raw);
+      if (questions.length) return { questions, engine: "claude" };
+      console.error("[rehearsal] generateAnticipatedQuestions: 결과가 비어 데모 대체");
+    } catch (e) {
+      console.error("[rehearsal] generateAnticipatedQuestions Claude 실패, 데모 대체:", e);
+    }
+  }
+  return {
+    questions: demoQuestions({ transcript: "", durationSec: 0, projectTitle: input.projectTitle }),
+    engine: "demo",
+  };
+}
+
+const QUESTIONS_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    questions: {
+      type: "array",
+      minItems: 6,
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          suggestedAnswer: { type: "string", description: "모범 답변 방향(구체적으로)" },
+        },
+        required: ["question", "suggestedAnswer"],
+      },
+    },
+  },
+  required: ["questions"],
+};
+
+// tool_use 가 배열을 문자열/객체맵으로 돌려줘도 복원한다 (planning.asArray 와 동일 취지).
+function normalizeQuestions(v: unknown): AnticipatedQA[] {
+  let arr: unknown[] = [];
+  if (Array.isArray(v)) arr = v;
+  else if (typeof v === "string") {
+    try {
+      const p = JSON.parse(v);
+      arr = Array.isArray(p) ? p : [p];
+    } catch {
+      arr = [];
+    }
+  } else if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o);
+    arr = keys.length && keys.every((k) => /^\d+$/.test(k)) ? Object.values(o) : [o];
+  }
+  return arr
+    .map((q) => q as Partial<AnticipatedQA>)
+    .filter((q) => q?.question)
+    .map((q) => ({ question: q.question || "", suggestedAnswer: q.suggestedAnswer || "" }));
+}
 
 function normalizeDims(dims: RehearsalDimension[]): RehearsalDimension[] {
   return REHEARSAL_DIMS.map((d) => {

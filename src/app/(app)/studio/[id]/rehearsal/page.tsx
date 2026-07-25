@@ -32,6 +32,8 @@ export default async function RehearsalPage({ params }: { params: Promise<{ id: 
         projectTitle={title}
         whisperAvailable={features.whisper}
         initial={project.rehearsals || []}
+        hasPlan={!!project.artifacts.plan}
+        announcementChars={project.artifacts.announcement?.length || 0}
       />
     </div>
   );

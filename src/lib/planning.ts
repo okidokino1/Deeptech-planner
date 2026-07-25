@@ -107,6 +107,7 @@ export interface PlanningArtifacts {
   differentiators?: Differentiator[];
   draft?: RnDDraft;
   plan?: BusinessPlan;
+  announcement?: string; // 발표연습용 정부지원사업 공고문 원문(사용자 업로드)
 }
 
 export type GenerateAction =
@@ -681,6 +682,9 @@ export function sanitizeArtifacts(
 
   if (a.draft) out.draft = normalizeDraft(a.draft);
   if (a.plan) out.plan = normalizePlan(a.plan, fallbackTitle);
+  if (typeof a.announcement === "string" && a.announcement.trim()) {
+    out.announcement = a.announcement;
+  }
 
   return out;
 }

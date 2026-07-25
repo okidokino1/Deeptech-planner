@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { RehearsalResult } from "@/lib/rehearsal";
 import type { RehearsalRecord } from "@/lib/planningStore";
+import { AnnouncementPanel } from "./AnnouncementPanel";
 
 type Phase = "idle" | "recording" | "scoring" | "done";
 
@@ -27,11 +28,15 @@ export function RehearsalStudio({
   projectTitle,
   whisperAvailable,
   initial,
+  hasPlan,
+  announcementChars,
 }: {
   projectId: string;
   projectTitle: string;
   whisperAvailable: boolean;
   initial: RehearsalRecord[];
+  hasPlan: boolean;
+  announcementChars: number;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -186,6 +191,11 @@ export function RehearsalStudio({
 
   return (
     <div className="space-y-5">
+      {/* 발표 전: 공고문 업로드 + 예상 질문 미리보기 */}
+      {phase === "idle" && (
+        <AnnouncementPanel projectId={projectId} hasPlan={hasPlan} initialChars={announcementChars} />
+      )}
+
       <div className="card p-6">
         <span className="chip bg-brand-100 text-brand-700">
           <Presentation className="h-3.5 w-3.5" /> 발표(PT) 연습
