@@ -6,8 +6,8 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
-  // pdf-parse(내부 pdf.js)는 서버에서만 쓰는 무거운 패키지 — 번들 대신 런타임 require 로 처리
-  serverExternalPackages: ["pdf-parse"],
+  // 서버 전용 무거운/네이티브성 패키지 — 번들 대신 런타임 require 로 처리
+  serverExternalPackages: ["pdf-parse", "cfb"],
   images: {
     remotePatterns: [{ protocol: "https", hostname: "picsum.photos" }],
   },

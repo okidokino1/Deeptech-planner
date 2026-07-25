@@ -133,18 +133,18 @@ export function AnnouncementPanel({
       </div>
       <p className="mt-1 text-sm text-slate-500">
         지원하는 사업의 공고문을 올리면, 그 사업의 <b>평가지표·심사 관점</b>에 맞춰 심사위원 예상 질문을 뽑아드립니다.
-        PDF·텍스트 파일을 올리거나 내용을 붙여넣으세요.
+        <b>한글(.hwp/.hwpx)</b>·PDF·텍스트 파일을 올리거나 내용을 붙여넣으세요.
       </p>
 
       {/* 업로드 / 붙여넣기 */}
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div className="rounded-xl border border-dashed border-slate-300 p-4">
           <p className="text-sm font-semibold text-slate-700">파일 업로드</p>
-          <p className="mt-1 text-xs text-slate-400">PDF 또는 .txt (최대 15MB)</p>
+          <p className="mt-1 text-xs text-slate-400">한글(.hwp/.hwpx) · PDF · .txt (최대 15MB)</p>
           <input
             ref={fileRef}
             type="file"
-            accept=".pdf,.txt,.md,text/plain,application/pdf"
+            accept=".hwp,.hwpx,.pdf,.txt,.md,text/plain,application/pdf"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -160,7 +160,7 @@ export function AnnouncementPanel({
             파일 선택
           </button>
           <p className="mt-2 text-xs text-slate-400">
-            한글(.hwp)은 내용을 복사해 오른쪽에 붙여넣어 주세요.
+            정부지원 공고문 한글 파일을 그대로 올리면 됩니다.
           </p>
         </div>
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { getProject, saveProject } from "@/lib/planningStore";
+import { extractHwp, extractHwpx } from "@/lib/hwp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -34,11 +35,15 @@ export async function POST(req: Request) {
 
       if (name.endsWith(".pdf")) {
         text = await extractPdf(buf);
+      } else if (name.endsWith(".hwpx")) {
+        text = await extractHwpx(buf);
+      } else if (name.endsWith(".hwp")) {
+        text = await extractHwp(buf);
       } else if (name.endsWith(".txt") || name.endsWith(".md") || file.type.startsWith("text/")) {
         text = buf.toString("utf8");
       } else {
         return NextResponse.json(
-          { error: "PDF 또는 텍스트(.txt) 파일만 지원합니다. 한글(.hwp) 등은 내용을 복사해 붙여넣어 주세요." },
+          { error: "PDF, 한글(.hwp/.hwpx), 텍스트(.txt) 파일을 지원합니다." },
           { status: 400 }
         );
       }
@@ -49,7 +54,11 @@ export async function POST(req: Request) {
     }
   } catch (e) {
     console.error("[rehearsal/announcement] 파싱 실패:", e);
-    return NextResponse.json({ error: "파일을 읽지 못했습니다. 내용을 복사해 붙여넣어 주세요." }, { status: 400 });
+    const msg = e instanceof Error ? e.message : "";
+    return NextResponse.json(
+      { error: `파일을 읽지 못했습니다${msg ? ` (${msg})` : ""}. 내용을 복사해 붙여넣어 주세요.` },
+      { status: 400 }
+    );
   }
 
   if (!projectId) return NextResponse.json({ error: "projectId 필요" }, { status: 400 });
