@@ -19,15 +19,18 @@ export interface RehearsalInput {
   targetSec?: number; // 목표 발표 시간(초). 기본 없음
   question?: string; // 특정 예상질문에 대한 답변 연습이면 지정
   announcement?: string; // 정부지원사업 공고문(심사 관점 반영용)
+  application?: string; // 정부지원사업 사업 신청서(작성본)
 }
 
-// 공고문은 수십 페이지일 수 있어 프롬프트 토큰이 폭증한다.
+// 공고문/신청서는 수십 페이지일 수 있어 프롬프트 토큰이 폭증한다.
 // 심사 예상질문 생성에는 앞부분(사업목적·지원자격·평가지표·지원규모)만으로 충분하므로 상한을 둔다.
-const ANNOUNCEMENT_MAX = 8000;
-export function trimAnnouncement(s?: string): string {
+const DOC_MAX = 8000;
+export function trimDoc(s?: string): string {
   const t = (s || "").trim();
-  return t.length > ANNOUNCEMENT_MAX ? t.slice(0, ANNOUNCEMENT_MAX) : t;
+  return t.length > DOC_MAX ? t.slice(0, DOC_MAX) : t;
 }
+// 하위호환 별칭
+export const trimAnnouncement = trimDoc;
 
 export type RehearsalDimKey =
   | "delivery" // 전달력 (발음·속도·필러워드)
@@ -98,11 +101,16 @@ async function scoreWithClaude(
 또한 심사위원이 실제로 물어볼 법한 예리한 예상 질문 4~6개와 모범 답변 방향을 제시합니다.
 모든 서술은 한국어. 코멘트는 구체적 개선점을 담습니다. 반드시 submit_rehearsal 도구를 호출하세요.`;
 
-  const ann = trimAnnouncement(input.announcement);
+  const ann = trimDoc(input.announcement);
+  const app = trimDoc(input.application);
   const ctx = [
     input.projectTitle ? `[발표 과제] ${input.projectTitle}` : "",
     input.planSummary ? `[사업계획 요약] ${input.planSummary}` : "",
-    ann ? `[정부지원사업 공고문]\n${ann}\n\n※ 위 공고문의 평가지표·지원목적·심사 관점을 반영해 예상 질문을 뽑을 것.` : "",
+    ann ? `[정부지원사업 공고문]\n${ann}` : "",
+    app ? `[제출한 사업 신청서]\n${app}` : "",
+    ann || app
+      ? "※ 위 공고문·신청서·계획서를 교차로 검토해, 세 문서 간의 불일치나 공고 평가지표 대비 미흡한 부분을 파고드는 예상 질문을 뽑을 것."
+      : "",
     input.question ? `[답변 대상 예상질문] ${input.question}` : "",
     input.targetSec ? `[목표 발표시간] ${input.targetSec}초` : "",
     `[음성 지표] ${metricsSummary(metrics)}`,
@@ -182,6 +190,7 @@ export interface QuestionsInput {
   projectTitle?: string;
   planSummary?: string; // 사업계획서 상세 맥락
   announcement?: string; // 정부지원사업 공고문
+  application?: string; // 제출한 사업 신청서
 }
 
 export async function generateAnticipatedQuestions(
@@ -190,20 +199,28 @@ export async function generateAnticipatedQuestions(
   if (features.claude) {
     try {
       const client = new Anthropic({ apiKey: env.anthropicKey });
-      const ann = trimAnnouncement(input.announcement);
+      const ann = trimDoc(input.announcement);
+      const app = trimDoc(input.application);
       const system = `당신은 정부 R&D·창업 지원사업(딥테크) 대면 발표의 심사위원입니다.
-지원자의 사업계획서와 해당 사업의 공고문을 근거로, 실제 심사 현장에서 나올 법한
+지원자가 제출한 자료(공고문·사업 신청서·사업계획서)를 근거로, 실제 심사 현장에서 나올 법한
 날카로운 예상 질문 6~8개와 각 질문에 대한 모범 답변 방향을 제시합니다.
-- 공고문이 있으면 그 사업의 평가지표·지원목적·심사기준을 정확히 반영하세요.
-  (예: 공고가 '사업화 성공 가능성'을 크게 본다면 매출·고객 검증 질문을, '기술 혁신성'을
-   본다면 신규성·특허 질문을 우선 배치)
+- 세 문서를 교차 검토하세요:
+  · 공고문 → 그 사업의 평가지표·지원목적·심사기준을 정확히 반영
+    (예: 공고가 '사업화 성공 가능성'을 크게 본다면 매출·고객 검증 질문을, '기술 혁신성'을
+     본다면 신규성·특허 질문을 우선 배치)
+  · 사업 신청서 → 지원자가 실제로 써낸 목표·예산·일정·정량지표에서 근거가 약하거나
+    과장된 부분, 공고 요건과 어긋나는 부분을 파고들기
+  · 사업계획서 → 기술 구성·모델 선정·차별성의 구체적 허점
+- 세 문서 간 불일치(예: 신청서 매출목표 vs 계획서 시장규모)가 있으면 반드시 질문으로 만드세요.
 - 기술 타당성, 차별성, 시장성, 팀 역량, 예산·일정 리스크를 고르게 다루세요.
-- 두루뭉술한 질문이 아니라, 계획서의 구체적 약점을 파고드는 질문을 만드세요.
+- 두루뭉술한 질문이 아니라, 제출 자료의 구체적 약점을 파고드는 질문을 만드세요.
+- 각 질문에는 어떤 근거(공고문/신청서/계획서)에서 나온 질문인지 자연스럽게 드러나면 좋습니다.
 모든 서술은 한국어. 반드시 submit_questions 도구를 호출하세요.`;
       const ctx = [
         input.projectTitle ? `[과제명] ${input.projectTitle}` : "",
-        input.planSummary ? `[사업계획서 요약]\n${input.planSummary}` : "",
-        ann ? `[정부지원사업 공고문]\n${ann}` : "[공고문] (제출되지 않음 — 일반적인 심사 관점으로 질문 생성)",
+        ann ? `[정부지원사업 공고문]\n${ann}` : "[공고문] (미제출)",
+        app ? `[제출한 사업 신청서]\n${app}` : "[사업 신청서] (미제출)",
+        input.planSummary ? `[사업계획서 요약]\n${input.planSummary}` : "[사업계획서] (미완성)",
       ]
         .filter(Boolean)
         .join("\n\n");

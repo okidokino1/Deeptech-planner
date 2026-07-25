@@ -49,6 +49,7 @@ export async function POST(req: Request) {
     projectTitle: plan?.titleCandidates?.[0] || project.title,
     planSummary,
     announcement: project.artifacts.announcement,
+    application: project.artifacts.application,
   });
 
   const record = {

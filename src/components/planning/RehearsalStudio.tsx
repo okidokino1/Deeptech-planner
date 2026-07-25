@@ -30,6 +30,7 @@ export function RehearsalStudio({
   initial,
   hasPlan,
   announcementChars,
+  applicationChars,
 }: {
   projectId: string;
   projectTitle: string;
@@ -37,6 +38,7 @@ export function RehearsalStudio({
   initial: RehearsalRecord[];
   hasPlan: boolean;
   announcementChars: number;
+  applicationChars: number;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
@@ -193,7 +195,12 @@ export function RehearsalStudio({
     <div className="space-y-5">
       {/* 발표 전: 공고문 업로드 + 예상 질문 미리보기 */}
       {phase === "idle" && (
-        <AnnouncementPanel projectId={projectId} hasPlan={hasPlan} initialChars={announcementChars} />
+        <AnnouncementPanel
+          projectId={projectId}
+          hasPlan={hasPlan}
+          announcementChars={announcementChars}
+          applicationChars={applicationChars}
+        />
       )}
 
       <div className="card p-6">

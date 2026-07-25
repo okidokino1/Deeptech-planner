@@ -36,7 +36,13 @@ export async function POST(req: Request) {
     projectTitle: plan?.titleCandidates?.[0] || project.title,
     planSummary,
     announcement: project.artifacts.announcement,
+    application: project.artifacts.application,
   });
 
-  return NextResponse.json({ questions, engine, hasAnnouncement: !!project.artifacts.announcement });
+  return NextResponse.json({
+    questions,
+    engine,
+    hasAnnouncement: !!project.artifacts.announcement,
+    hasApplication: !!project.artifacts.application,
+  });
 }
