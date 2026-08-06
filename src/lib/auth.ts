@@ -3,7 +3,9 @@ import { features, isAdminEmail } from "./env";
 import { getSupabaseServer } from "./supabase/server";
 import type { Profile } from "./types";
 
-const DEMO_COOKIE = "sp_demo_user";
+// Speaking PT("sp_")와 이름이 겹치면 안 된다. 쿠키는 포트를 구분하지 않아
+// 두 앱을 로컬에서 동시에 띄우면 세션·credits 가 서로 침범된다.
+const DEMO_COOKIE = "dtp_demo_user";
 
 // 현재 로그인 사용자(Profile) 반환. 없으면 null.
 export async function getSessionUser(): Promise<Profile | null> {
