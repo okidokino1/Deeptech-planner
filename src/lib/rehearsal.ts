@@ -70,20 +70,25 @@ export const REHEARSAL_DIMS: { key: RehearsalDimKey; label: string }[] = [
   { key: "clarity", label: "명료성" },
 ];
 
-// 한국어 발표용 필러(간투사)
-const KO_FILLERS = ["음", "어", "그", "저기", "이제", "뭐", "인제", "약간", "좀"];
+// 간투사 집계는 metrics.ts 의 computeMetrics 가 담당한다(한국어·영어 모두).
 
 // ---------------------------------------------------------------------------
 export async function scoreRehearsal(input: RehearsalInput): Promise<RehearsalResult> {
-  const metrics = computeMetrics(input.transcript || "", input.durationSec || 0, input.words);
-  if (features.claude && input.transcript.trim()) {
+  // 전사가 NFD(자모 분리) 한글로 들어오면 간투사·구조어("먼저/따라서" 등) 정규식이
+  // 모두 빗나간다. 채점 전에 한 번만 NFC 로 합성해 전 경로에 같은 문자열을 넘긴다.
+  const normalized: RehearsalInput = {
+    ...input,
+    transcript: (input.transcript || "").normalize("NFC"),
+  };
+  const metrics = computeMetrics(normalized.transcript, normalized.durationSec || 0, normalized.words);
+  if (features.claude && normalized.transcript.trim()) {
     try {
-      return await scoreWithClaude(input, metrics);
+      return await scoreWithClaude(normalized, metrics);
     } catch (e) {
       console.error("[rehearsal] Claude 채점 실패, 데모 대체:", e);
     }
   }
-  return scoreWithDemo(input, metrics);
+  return scoreWithDemo(normalized, metrics);
 }
 
 async function scoreWithClaude(
@@ -304,14 +309,13 @@ const clamp = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
 // ---------------------------------------------------------------------------
 function scoreWithDemo(input: RehearsalInput, metrics: SpeechMetrics): RehearsalResult {
   const t = input.transcript.trim();
-  const koFillers = countKoFillers(t);
-  const totalFillers = metrics.fillerCount + koFillers;
+  const fillers = metrics.fillerCount; // 한국어 간투사 포함 (metrics.ts)
   const chars = t.replace(/\s/g, "").length;
 
   // 전달력: 속도 적정(한국어 발표 250~350자/분 근사) + 필러/멈춤 감점
   const cpm = input.durationSec ? (chars / input.durationSec) * 60 : 0;
   const speedScore = cpm ? 100 - Math.min(45, Math.abs(300 - cpm) * 0.12) : 55;
-  const delivery = clamp(speedScore - totalFillers * 3 - metrics.pauseCount * 1.5);
+  const delivery = clamp(speedScore - fillers * 3 - metrics.pauseCount * 1.5);
 
   // 구성: 접속/구조 표현 + 시간 목표 부합
   const structureWords = (t.match(/(먼저|첫째|둘째|셋째|다음으로|마지막|결론|요약|따라서|그래서)/g) || []).length;
@@ -330,10 +334,10 @@ function scoreWithDemo(input: RehearsalInput, metrics: SpeechMetrics): Rehearsal
 
   // 명료성: 문장 길이·필러 역가중
   const sentences = t.split(/[.!?。]|다\.|요\./).filter((s) => s.trim().length > 3).length;
-  const clarity = clamp(62 + Math.min(16, sentences * 2) - totalFillers * 2);
+  const clarity = clamp(62 + Math.min(16, sentences * 2) - fillers * 2);
 
   const dims: RehearsalDimension[] = [
-    { key: "delivery", label: "전달력", score: delivery, comment: deliveryComment(delivery, metrics, totalFillers, cpm) },
+    { key: "delivery", label: "전달력", score: delivery, comment: deliveryComment(delivery, metrics, fillers, cpm) },
     { key: "structure", label: "구성", score: structure, comment: structure >= 72 ? "논리 흐름이 잡혀 있습니다." : "먼저/다음으로/결론 같은 구조 신호어로 흐름을 명확히 하세요." },
     { key: "content", label: "내용 충실도", score: content, comment: content >= 72 ? "기술·사업 내용이 구체적입니다." : "핵심 기술과 차별점을 수치와 함께 더 구체적으로 담으세요." },
     { key: "persuasion", label: "설득력", score: persuasion, comment: persuasion >= 72 ? "정량 근거로 설득력이 있습니다." : "목표 수치·성과·검증 계획 등 정량 근거를 추가하세요." },
@@ -351,7 +355,7 @@ function scoreWithDemo(input: RehearsalInput, metrics: SpeechMetrics): Rehearsal
       : "발표 음성이 감지되지 않았습니다.",
     strengths: t ? ["과제 내용을 자신의 언어로 전달함"] : [],
     improvements: [
-      totalFillers >= 3 ? `필러워드(음/어/그 등) ${totalFillers}회 — 짧은 침묵으로 대체하세요.` : "도입 10초 안에 '무엇을·왜'가 드러나도록 첫 문장을 강화하세요.",
+      fillers >= 3 ? `필러워드(음/어/그 등) ${fillers}회 — 짧은 침묵으로 대체하세요.` : "도입 10초 안에 '무엇을·왜'가 드러나도록 첫 문장을 강화하세요.",
       "결론에서 목표 성과와 사업화 계획을 한 문장으로 요약하세요.",
     ],
     anticipatedQuestions: demoQuestions(input),
@@ -359,17 +363,8 @@ function scoreWithDemo(input: RehearsalInput, metrics: SpeechMetrics): Rehearsal
   };
 }
 
-function countKoFillers(t: string): number {
-  let n = 0;
-  for (const f of KO_FILLERS) {
-    const re = new RegExp(`(^|\\s)${f}(\\s|,|\\.|$)`, "g");
-    n += (t.match(re) || []).length;
-  }
-  return n;
-}
-
 function deliveryComment(score: number, m: SpeechMetrics, fillers: number, cpm: number): string {
-  const speed = cpm ? `말속도 약 ${Math.round(cpm)}자/분` : `${m.wpm} WPM`;
+  const speed = cpm ? `말속도 약 ${Math.round(cpm)}자/분` : `${m.wpm} 어절/분`;
   return `${speed} · 필러 ${fillers}회 · 멈춤 ${m.pauseCount}회. ${
     score >= 72 ? "안정적인 전달입니다." : "속도를 일정하게 하고 불필요한 멈춤·간투사를 줄이세요."
   }`;

@@ -1,9 +1,9 @@
 // 공용 타입 (딥테크 플래너)
 
 export interface SpeechMetrics {
-  wordCount: number;
-  wpm: number; // 분당 단어 수
-  fillerCount: number; // um, uh, like ...
+  wordCount: number; // 한국어는 어절 수
+  wpm: number; // 분당 어절 수 (한국어 발표 표준 약 90~110)
+  fillerCount: number; // 간투사(음/어/그 …) + 영어 필러(um/uh …)
   fillerRatio: number;
   pauseCount: number;
   longestPauseSec: number;

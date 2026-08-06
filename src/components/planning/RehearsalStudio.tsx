@@ -325,8 +325,8 @@ function ResultCard({ result, onRetry }: { result: RehearsalResult; onRetry: () 
 
         <div className="mt-4 flex flex-wrap gap-2 text-xs">
           <span className="chip bg-slate-100 text-slate-600"><Timer className="h-3 w-3" /> {m.wordCount}어절</span>
-          <span className="chip bg-slate-100 text-slate-600">{m.wpm} WPM</span>
-          <span className="chip bg-slate-100 text-slate-600">필러 {m.fillerCount}회</span>
+          <span className="chip bg-slate-100 text-slate-600">{m.wpm} 어절/분</span>
+          <span className="chip bg-slate-100 text-slate-600">간투사 {m.fillerCount}회</span>
           <span className="chip bg-slate-100 text-slate-600">멈춤 {m.pauseCount}회</span>
         </div>
 
